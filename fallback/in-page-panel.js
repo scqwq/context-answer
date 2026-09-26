@@ -25,7 +25,7 @@
     shadow.appendChild(stylesheet);
     const panel = document.createElement("section");
     panel.className = "panel";
-    panel.innerHTML = `<header class="header"><span class="title">ContextLens · 学习解释</span><span><button class="diagnostics" title="查看脱敏诊断日志">诊断</button><button class="close" title="关闭">×</button></span></header><main class="body"><pre class="context"></pre><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><p class="option-hint">自动模式会先由模型判断，必要时按 5、10、20 行扩展。</p><textarea placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></main>`;
+    panel.innerHTML = `<header class="header"><span class="title">ContextLens · 学习解释</span><span><button class="diagnostics" title="查看脱敏诊断日志">诊断</button><button class="close" title="关闭">×</button></span></header><main class="body"><pre class="context"></pre><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><p class="option-hint">自动模式会先由模型判断，必要时按 5、10、20 行扩展。</p><textarea placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></main>`;
     shadow.appendChild(panel);
     document.documentElement.appendChild(host);
     elements = {
@@ -33,6 +33,7 @@
       input: panel.querySelector("textarea"),
       learn: panel.querySelector(".primary"),
       send: panel.querySelector(".secondary"),
+      stop: panel.querySelector(".stop"),
       language: panel.querySelector(".source-language"),
       contextMode: panel.querySelector(".context-mode"),
       contextLines: panel.querySelector(".context-lines"),
@@ -41,14 +42,25 @@
       status: panel.querySelector(".status"),
       answer: panel.querySelector(".answer")
     };
-    panel.querySelector(".close").addEventListener("click", () => host.remove());
+    panel.querySelector(".close").addEventListener("click", () => {
+      if (activeRequestId) void stopRequest();
+      host.remove();
+    });
     elements.learn.addEventListener("click", () => send("请按学习模式解释选中内容。"));
     elements.send.addEventListener("click", () => send(elements.input.value));
+    elements.stop.addEventListener("click", stopRequest);
     elements.diagnostics.addEventListener("click", showDiagnostics);
     elements.language.addEventListener("change", saveOptions);
     elements.contextMode.addEventListener("change", saveOptions);
     elements.contextLines.addEventListener("change", saveOptions);
     void loadOptions();
+  }
+
+  function setRunning(running) {
+    elements.learn.disabled = running;
+    elements.send.disabled = running;
+    elements.stop.disabled = !running;
+    elements.input.disabled = running;
   }
 
   function renderOptions(options) {
@@ -92,12 +104,14 @@
   }
 
   async function send(instruction) {
+    if (activeRequestId) return;
     if (!currentPayload?.contextData) {
       elements.status.textContent = "没有可用的选区上下文，请重新选取内容。";
       elements.status.className = "status error";
       return;
     }
     activeRequestId = `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setRunning(true);
     elements.answer.dataset.rawAnswer = "";
     renderAnswer("");
     elements.status.textContent = "正在请求模型…";
@@ -117,7 +131,16 @@
     if (!response?.success) {
       elements.status.textContent = response?.error || "模型请求无法启动。";
       elements.status.className = "status error";
+      activeRequestId = null;
+      setRunning(false);
     }
+  }
+
+  async function stopRequest() {
+    if (!activeRequestId) return;
+    const requestId = activeRequestId;
+    elements.status.textContent = "正在停止请求…";
+    await chrome.runtime.sendMessage({ type: "CANCEL_FALLBACK_REQUEST", requestId }).catch(() => null);
   }
 
   async function showDiagnostics() {
@@ -145,7 +168,11 @@
       elements.answer.dataset.rawAnswer = next;
       renderAnswer(next);
     }
-    if (message.event === "done") elements.status.textContent = "回答完成";
+    if (message.event === "done") {
+      elements.status.textContent = "回答完成";
+      activeRequestId = null;
+      setRunning(false);
+    }
     if (message.event === "status") elements.status.textContent = message.text;
     if (message.event === "needs-context") {
       elements.answer.dataset.rawAnswer = "";
@@ -157,6 +184,13 @@
     if (message.event === "error") {
       elements.status.textContent = message.error;
       elements.status.className = "status error";
+      activeRequestId = null;
+      setRunning(false);
+    }
+    if (message.event === "cancelled") {
+      elements.status.textContent = "已停止请求";
+      activeRequestId = null;
+      setRunning(false);
     }
   });
 

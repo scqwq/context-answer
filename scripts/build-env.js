@@ -29,6 +29,10 @@ if (!fs.existsSync(envPath)) {
 
 const env = parseEnv(fs.readFileSync(envPath, "utf8"));
 const isTrue = /^(1|true|yes)$/i.test(env.CONTEXTLENS_USE_LOCAL_MODEL || "");
+function boundedMs(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(300000, Math.max(5000, parsed)) : fallback;
+}
 const remote = {
   provider: env.CONTEXTLENS_API_PROVIDER || "",
   apiKey: env.CONTEXTLENS_API_KEY || "",
@@ -52,6 +56,8 @@ const learning = {
   outputStyle: env.CONTEXTLENS_LEARNING_OUTPUT_STYLE || "focus",
   maxKeyPoints: Number(env.CONTEXTLENS_LEARNING_MAX_KEY_POINTS || 3),
   codeExamples: env.CONTEXTLENS_LEARNING_CODE_EXAMPLES || "on-demand",
+  requestTimeoutMs: boundedMs(env.CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS, 90000),
+  assessmentTimeoutMs: boundedMs(env.CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS, 15000),
   sourceLanguage: env.CONTEXTLENS_LEARNING_SOURCE_LANGUAGE || "auto",
   contextMode: env.CONTEXTLENS_LEARNING_CONTEXT_MODE || "auto",
   manualLines: Number(env.CONTEXTLENS_LEARNING_MANUAL_LINES || 5)

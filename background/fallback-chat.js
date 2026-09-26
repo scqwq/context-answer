@@ -5,6 +5,24 @@
 (function registerFallbackChat(global) {
   const requests = new Map();
 
+  function withAssessmentTimeout(operation, parentSignal, timeoutMs) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const onParentAbort = () => controller.abort(parentSignal.reason);
+    parentSignal.addEventListener("abort", onParentAbort, { once: true });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("上下文评估超时"));
+    }, timeoutMs);
+    return operation(controller.signal).catch((error) => {
+      if (timedOut) throw new Error(`上下文评估超过 ${Math.round(timeoutMs / 1000)} 秒，请重试或改用手动上下文。`);
+      throw error;
+    }).finally(() => {
+      clearTimeout(timer);
+      parentSignal.removeEventListener("abort", onParentAbort);
+    });
+  }
+
   async function resolveModel() {
     const saved = await chrome.storage.local.get(["configuredApiModels", "activeModelId", "defaultModelId", "apiProvider", "providers"]);
     const defaults = global.ContextLensRuntimeConfig?.getDefaults?.() || {};
@@ -158,13 +176,18 @@
     if (!context) throw new Error("未收到选区上下文。");
     const model = await resolveModel();
     if (!model.provider || model.provider.endsWith("-agent")) throw new Error("网页内学习面板仅支持 API 模型，请配置 Gemini、OpenAI、Claude 或自定义兼容接口。");
+    const options = global.ContextLensLearningOptions.normalize(requestOptions || await global.ContextLensLearningOptions.get());
     const controller = new AbortController();
-    requests.set(requestId, controller);
+    const requestState = { controller, cancelled: false, timedOut: false, timeoutId: null };
+    requestState.timeoutId = setTimeout(() => {
+      requestState.timedOut = true;
+      controller.abort(new Error("学习请求总超时"));
+    }, options.requestTimeoutMs);
+    requests.set(requestId, requestState);
     const sendChunk = (text) => event(tabId, requestId, { event: "chunk", text });
     const transport = model.apiEndpoint ? "direct-endpoint" : "openai-compatible-base-url";
     try {
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "context-preparation-started", provider: model.provider, transport });
-      const options = global.ContextLensLearningOptions.normalize(requestOptions || await global.ContextLensLearningOptions.get());
       const prepared = await global.ContextLensContextOrchestrator.prepare({
         context,
         question: instruction,
@@ -172,7 +195,11 @@
         assess: async (candidate, radius) => {
           await event(tabId, requestId, { event: "status", text: radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…` });
           const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), radius });
-          return assess(model, assessmentPrompt, controller.signal);
+          return withAssessmentTimeout(
+            (assessmentSignal) => assess(model, assessmentPrompt, assessmentSignal),
+            controller.signal,
+            options.assessmentTimeoutMs
+          );
         },
         expand: async (radius) => {
           await event(tabId, requestId, { event: "status", text: `信息不足，正在读取上下各 ${radius} 行…` });
@@ -199,12 +226,25 @@
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport });
       await event(tabId, requestId, { event: "done" });
     } catch (error) {
-      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "failed", provider: model.provider, transport, status: error.status || null, error: error.message });
-      if (error.name !== "AbortError") await event(tabId, requestId, { event: "error", error: error.message || "请求失败。" });
+      const message = requestState.timedOut
+        ? `学习请求超过 ${Math.round(options.requestTimeoutMs / 1000)} 秒，请重试。`
+        : (error.message || "请求失败。");
+      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: requestState.cancelled ? "cancelled" : "failed", provider: model.provider, transport, status: error.status || null, error: message });
+      if (!requestState.cancelled) await event(tabId, requestId, { event: "error", error: message });
     } finally {
+      clearTimeout(requestState.timeoutId);
       requests.delete(requestId);
     }
   }
 
-  global.ContextLensFallbackChat = { start, assess };
+  function cancel(requestId) {
+    const requestState = requests.get(requestId);
+    if (!requestState) return false;
+    requestState.cancelled = true;
+    clearTimeout(requestState.timeoutId);
+    requestState.controller.abort(new Error("用户取消请求"));
+    return true;
+  }
+
+  global.ContextLensFallbackChat = { start, assess, cancel };
 })(globalThis);

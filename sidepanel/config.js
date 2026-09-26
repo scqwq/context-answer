@@ -30,6 +30,8 @@
         outputStyle: raw.learning?.outputStyle === "standard" ? "standard" : "focus",
         maxKeyPoints: Math.min(5, Math.max(2, Number(raw.learning?.maxKeyPoints) || 3)),
         codeExamples: ["never", "on-demand", "always"].includes(raw.learning?.codeExamples) ? raw.learning.codeExamples : "on-demand",
+        requestTimeoutMs: Math.min(300000, Math.max(5000, Number(raw.learning?.requestTimeoutMs) || 90000)),
+        assessmentTimeoutMs: Math.min(300000, Math.max(5000, Number(raw.learning?.assessmentTimeoutMs) || 15000)),
         sourceLanguage: String(raw.learning?.sourceLanguage || "auto"),
         contextMode: raw.learning?.contextMode === "manual" ? "manual" : "auto",
         manualLines: [5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5

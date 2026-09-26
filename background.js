@@ -6,6 +6,7 @@ importScripts("sidepanel/config.js", "shared/learning-options.js", "shared/learn
 // Track which tabs have side panel active
 let activeSidePanelTabs = new Set();
 const SIDE_PANEL_PATH = "sidepanel/sidepanel.html";
+const nativeAssessmentRequests = new Map();
 
 // Cache of the latest right-clicked context per tab
 let tabRightClickContexts = {};
@@ -409,6 +410,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "CANCEL_FALLBACK_REQUEST") {
+    const cancelled = ContextLensFallbackChat.cancel(message.requestId);
+    if (cancelled && sender.tab?.id) {
+      chrome.tabs.sendMessage(sender.tab.id, {
+        type: "FALLBACK_STREAM_EVENT",
+        requestId: message.requestId,
+        event: "cancelled"
+      }).catch(() => {});
+    }
+    sendResponse({ success: true, cancelled });
+    return false;
+  }
+
   if (message.type === "GET_REQUEST_DIAGNOSTICS") {
     ContextLensRequestDiagnostics.list(15)
       .then((entries) => sendResponse({ success: true, entries }))
@@ -437,8 +451,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     const transport = model.apiEndpoint ? "direct-endpoint" : "streaming-api";
+    const requestId = String(message.requestId || "");
+    const controller = new AbortController();
+    const timeoutMs = Math.min(300000, Math.max(5000, Number(message.timeoutMs) || 15000));
+    if (requestId) nativeAssessmentRequests.set(requestId, controller);
+    const timer = setTimeout(() => controller.abort(new Error("上下文评估超时")), timeoutMs);
     ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-started", provider: model.provider, transport })
-      .then(() => ContextLensFallbackChat.assess(model, String(message.prompt || ""), new AbortController().signal))
+      .then(() => ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal))
       .then(async (text) => {
         await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-completed", provider: model.provider, transport });
         sendResponse({ success: true, text });
@@ -446,8 +465,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(async (error) => {
         await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-failed", provider: model.provider, transport, status: error.status || null, error: error.message });
         sendResponse({ success: false, error: error.message });
+      }).finally(() => {
+        clearTimeout(timer);
+        if (requestId && nativeAssessmentRequests.get(requestId) === controller) nativeAssessmentRequests.delete(requestId);
       });
     return true;
+  }
+
+  if (message.type === "CANCEL_CONTEXT_ASSESSMENT") {
+    const controller = nativeAssessmentRequests.get(String(message.requestId || ""));
+    if (controller) controller.abort(new Error("用户取消上下文评估"));
+    sendResponse({ success: true, cancelled: !!controller });
+    return false;
   }
 
   if (message.type === "OPEN_SIDE_PANEL") {

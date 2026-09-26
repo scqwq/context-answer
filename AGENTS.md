@@ -61,6 +61,9 @@
 - 评估请求使用非流式短响应，最终学习回答才使用流式响应；两类阶段均写入脱敏诊断日志。
 - `content.js` 的 `GET_CONTEXT_WINDOW` 是上下文扩展入口。代码按源码行取窗口；普通网页按可见文本逻辑行取窗口。不要把该接口改成默认全文采集。
 - 网页内面板的回答必须通过 `fallback/answer-renderer.js` 安全渲染有限 Markdown；禁止用 `innerHTML` 渲染模型原始输出。
+- 网页内面板请求期间禁用“一键学习解释”和“发送问题”，并启用“停止”。停止会发送 `CANCEL_FALLBACK_REQUEST`，后台必须中止对应 `AbortController`，不得仅隐藏旧结果。
+- 原生侧边栏的充分性评估也属于活动请求：`contextWorkflowId` 与 `CANCEL_CONTEXT_ASSESSMENT` 负责取消后台评估。新增异步流程时必须复用或更新 `tabRequestStates`，避免重复点击产生并行请求。
+- 总超时覆盖“评估 + 上下文扩展 + 最终流式回答”；单次评估有独立超时。超时应反馈给用户并写入脱敏日志。
 
 ## 配置参数
 
@@ -81,6 +84,8 @@
 | `CONTEXTLENS_LEARNING_OUTPUT_STYLE` | `focus` | `focus` 强制“核心结论优先”；`standard` 允许较完整讲解 |
 | `CONTEXTLENS_LEARNING_MAX_KEY_POINTS` | `3` | 解释要点上限，运行时收敛到 2～5 |
 | `CONTEXTLENS_LEARNING_CODE_EXAMPLES` | `on-demand` | `never`、`on-demand` 或 `always`，控制是否主动给最小示例 |
+| `CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS` | `90000` | 单次学习任务总超时，范围自动收敛到 5,000～300,000 毫秒 |
+| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | `15000` | 每次上下文充分性评估的超时，范围同上 |
 | `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，只支持 5 / 10 / 20 |

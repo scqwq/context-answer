@@ -121,12 +121,16 @@ const MAX_CLIPBOARD_IMAGE_BYTES = 8 * 1024 * 1024;
 const CHAT_INPUT_HISTORY_STORAGE_KEY = "chatInputHistories";
 const MAX_CHAT_INPUT_HISTORY_ITEMS = 10;
 let tabPendingClipboardImages = {}; // tabId -> [{ id, dataUrl, mimeType, size, name }]
-let tabRequestStates = {}; // tabId -> { activeReader, activeAbortController, isRequestInProgress, userAbortRequested }
+let tabRequestStates = {}; // tabId -> { activeReader, activeAbortController, contextWorkflowId, timeoutId, isRequestInProgress, userAbortRequested }
 
 function createRequestState() {
   return {
     activeReader: null,
     activeAbortController: null,
+    contextWorkflowId: "",
+    timeoutId: null,
+    timedOut: false,
+    deadlineAt: 0,
     isRequestInProgress: false,
     userAbortRequested: false
   };
@@ -1066,11 +1070,21 @@ function setRequestRunningState(isRunning, tabId = currentTabId) {
 async function handleStopStreamingRequest(tabId = currentTabId) {
   if (!tabId) return;
   const requestState = getTabRequestState(tabId);
-  if (!requestState.activeReader && !requestState.activeAbortController) {
+  if (!requestState.activeReader && !requestState.activeAbortController && !requestState.contextWorkflowId) {
     return;
   }
 
   requestState.userAbortRequested = true;
+
+  if (requestState.contextWorkflowId) {
+    chrome.runtime.sendMessage({ type: "CANCEL_CONTEXT_ASSESSMENT", requestId: requestState.contextWorkflowId }).catch(() => {});
+    requestState.contextWorkflowId = "";
+  }
+  if (requestState.timeoutId) {
+    clearTimeout(requestState.timeoutId);
+    requestState.timeoutId = null;
+  }
+  requestState.deadlineAt = 0;
 
   if (requestState.activeAbortController) {
     try {
@@ -1091,6 +1105,7 @@ async function handleStopStreamingRequest(tabId = currentTabId) {
   } finally {
     requestState.activeReader = null;
   }
+  setRequestRunningState(false, tabId);
 }
 
 function finalizeInFlightRequestForTabOnPanelClose(tabId) {
@@ -3899,6 +3914,7 @@ async function handleSendMessage() {
 
   // 首轮学习请求先由 LLM 判断选区是否足够；后续追问沿用首轮已保存的上下文。
   let activeLearningOptions = null;
+  let continueLearningRequest = false;
   const learningNotice = document.getElementById("learning-context-notice");
   const canPlanLearningContext = window.ContextLensLearning?.isLearningMode?.()
     && !appSettings.apiProvider.endsWith("-agent")
@@ -3906,6 +3922,17 @@ async function handleSendMessage() {
     && chatHistory.length === 0;
   if (canPlanLearningContext) {
     activeLearningOptions = await window.ContextLensLearningOptions.get();
+    const planningState = getTabRequestState(messageTabId);
+    const planningController = new AbortController();
+    const workflowId = `assessment-${messageTabId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    planningState.userAbortRequested = false;
+    planningState.activeAbortController = planningController;
+    planningState.contextWorkflowId = workflowId;
+    planningState.deadlineAt = Date.now() + activeLearningOptions.requestTimeoutMs;
+    planningState.timeoutId = setTimeout(() => {
+      planningController.abort(new Error("学习请求总超时"));
+    }, activeLearningOptions.requestTimeoutMs);
+    setRequestRunningState(true, messageTabId);
     if (learningNotice) {
       learningNotice.hidden = false;
       learningNotice.textContent = activeLearningOptions.contextMode === "manual"
@@ -3925,7 +3952,9 @@ async function handleSendMessage() {
           apiUrl: appSettings.apiUrl,
           apiEndpoint: runtimeDefaults.provider === appSettings.apiProvider ? runtimeDefaults.apiEndpoint : "",
           model: appSettings.modelName
-        }
+        },
+        signal: planningController.signal,
+        workflowId
       });
       if (prepared.status === "needs-user-context") {
         if (learningNotice) learningNotice.textContent = `需要更多上下文：${prepared.message} 请粘贴相关内容后重新发送。`;
@@ -3934,9 +3963,21 @@ async function handleSendMessage() {
       currentContext = { ...currentContext, contextData: prepared.context };
       if (messageTabId) getTabState(messageTabId).currentContext = currentContext;
       if (learningNotice) learningNotice.hidden = true;
+      continueLearningRequest = true;
     } catch (error) {
-      if (learningNotice) learningNotice.textContent = `上下文评估失败：${error.message}，请稍后重试。`;
+      if (learningNotice) learningNotice.textContent = planningController.signal.aborted
+        ? "已停止请求。"
+        : `上下文评估失败：${error.message}，请稍后重试。`;
       return;
+    } finally {
+      if (planningState.timeoutId) {
+        clearTimeout(planningState.timeoutId);
+        planningState.timeoutId = null;
+      }
+      if (planningState.activeAbortController === planningController) planningState.activeAbortController = null;
+      if (planningState.contextWorkflowId === workflowId) planningState.contextWorkflowId = "";
+      if (!continueLearningRequest) planningState.deadlineAt = 0;
+      setRequestRunningState(false, messageTabId);
     }
   }
 
@@ -5027,11 +5068,26 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
   }
   const abortController = new AbortController();
   requestState.activeAbortController = abortController;
+  requestState.timedOut = false;
+  if (requestState.timeoutId) clearTimeout(requestState.timeoutId);
+  const configuredTimeoutMs = window.ContextLensRuntimeConfig?.getLearningDefaults?.().requestTimeoutMs || 90000;
+  const nativeTimeoutMs = requestState.deadlineAt
+    ? Math.max(1, requestState.deadlineAt - Date.now())
+    : configuredTimeoutMs;
+  requestState.timeoutId = setTimeout(() => {
+    requestState.timedOut = true;
+    abortController.abort(new Error("学习请求总超时"));
+  }, nativeTimeoutMs);
 
   // Check configs
   if (!appSettings.apiKey && appSettings.apiProvider !== "custom" && !appSettings.apiProvider.endsWith("-agent")) {
     void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "failed-before-request", provider: appSettings.apiProvider, transport: "configuration", error: "缺少 API Key" });
     requestState.activeAbortController = null;
+    if (requestState.timeoutId) {
+      clearTimeout(requestState.timeoutId);
+      requestState.timeoutId = null;
+    }
+    requestState.deadlineAt = 0;
     appendMessage("assistant", t("chat.config_incomplete"));
     return;
   }
@@ -5714,7 +5770,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
     saveChatHistory(targetTabId);
 
   } catch (err) {
-    const wasUserAbort = requestState.userAbortRequested || isAbortError(err);
+    const wasUserAbort = requestState.userAbortRequested || (isAbortError(err) && !requestState.timedOut);
     if (wasUserAbort) {
       void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "cancelled", provider: appSettings.apiProvider, transport: "streaming-api" });
       requestState.activeReader = null;
@@ -5739,8 +5795,9 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
 
     console.error("ContextLens AI stream failed:", err);
     void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "failed", provider: appSettings.apiProvider, transport: appSettings.apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api", error: err.message });
+    const timeoutMessage = requestState.timedOut ? `学习请求超过 ${Math.round(nativeTimeoutMs / 1000)} 秒，请重试。` : "";
     const errMsg = t("chat.request_failed", {
-      error: err.message || t("chat.network_error")
+      error: timeoutMessage || err.message || t("chat.network_error")
     });
     assistantMsgObj.content = errMsg;
     assistantMsgObj.isError = true; // Flag this turn as failed to avoid history context pollution
@@ -5779,6 +5836,11 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
     commitStreamStatePersist();
     saveChatHistory(targetTabId);
   } finally {
+    if (requestState.timeoutId) {
+      clearTimeout(requestState.timeoutId);
+      requestState.timeoutId = null;
+    }
+    requestState.deadlineAt = 0;
     if (requestState.activeAbortController === abortController) {
       requestState.activeAbortController = null;
     }

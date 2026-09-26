@@ -35,7 +35,9 @@
       responseDetail: DETAIL_LEVELS.has(raw.responseDetail) ? raw.responseDetail : (DETAIL_LEVELS.has(defaults.responseDetail) ? defaults.responseDetail : "compact"),
       outputStyle: raw.outputStyle === "standard" ? "standard" : (defaults.outputStyle === "standard" ? "standard" : "focus"),
       maxKeyPoints: Math.min(5, Math.max(2, Number(raw.maxKeyPoints || defaults.maxKeyPoints) || 3)),
-      codeExamples: ["never", "on-demand", "always"].includes(raw.codeExamples) ? raw.codeExamples : (["never", "on-demand", "always"].includes(defaults.codeExamples) ? defaults.codeExamples : "on-demand")
+      codeExamples: ["never", "on-demand", "always"].includes(raw.codeExamples) ? raw.codeExamples : (["never", "on-demand", "always"].includes(defaults.codeExamples) ? defaults.codeExamples : "on-demand"),
+      requestTimeoutMs: Math.min(300000, Math.max(5000, Number(defaults.requestTimeoutMs) || 90000)),
+      assessmentTimeoutMs: Math.min(300000, Math.max(5000, Number(defaults.assessmentTimeoutMs) || 15000))
     };
   }
 
