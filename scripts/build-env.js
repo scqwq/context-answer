@@ -43,7 +43,15 @@ const local = {
   apiEndpoint: env.CONTEXTLENS_LOCAL_API_ENDPOINT || "",
   model: env.CONTEXTLENS_LOCAL_MODEL || ""
 };
-const config = { useLocalModel: isTrue, remote, local, bridgeUrl: env.CONTEXTLENS_BRIDGE_URL || "" };
+const learning = {
+  translationEnabled: !/^(0|false|no)$/i.test(env.CONTEXTLENS_LEARNING_TRANSLATION_ENABLED || "true"),
+  targetLanguage: env.CONTEXTLENS_LEARNING_TARGET_LANGUAGE || "zh-CN",
+  responseDetail: env.CONTEXTLENS_LEARNING_RESPONSE_DETAIL || "compact",
+  sourceLanguage: env.CONTEXTLENS_LEARNING_SOURCE_LANGUAGE || "auto",
+  contextMode: env.CONTEXTLENS_LEARNING_CONTEXT_MODE || "auto",
+  manualLines: Number(env.CONTEXTLENS_LEARNING_MANUAL_LINES || 5)
+};
+const config = { useLocalModel: isTrue, remote, local, learning, bridgeUrl: env.CONTEXTLENS_BRIDGE_URL || "" };
 
 const output = `// 由 scripts/build-env.js 自动生成；不要提交此文件。\nglobalThis.CONTEXT_LENS_LOCAL_ENV = ${JSON.stringify(config, null, 2)};\n`;
 fs.writeFileSync(outputPath, output, "utf8");

@@ -8,6 +8,11 @@ button { box-sizing: border-box; border: 0; border-radius: 8px; padding: 8px 10p
 .diagnostics { color: #fff; background: rgba(255,255,255,.16); padding: 4px 7px; margin-right: 5px; font-size: 12px; }
 .body { padding: 12px; overflow: auto; max-height: calc(100vh - 160px); }
 .context { margin: 0 0 10px; padding: 9px; overflow: auto; white-space: pre-wrap; background: #f5f5ff; border-radius: 8px; color: #4b5563; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 120px; }
+.options { display: grid; grid-template-columns: 1.2fr 1fr .8fr; gap: 7px; margin-bottom: 5px; }
+.options label { display: grid; gap: 3px; color: #4b5563; font-size: 11px; }
+.options select { min-width: 0; padding: 5px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; font: inherit; }
+.options .disabled { opacity: .5; }
+.option-hint { margin: 0 0 9px; color: #6b7280; font-size: 11px; }
 textarea { box-sizing: border-box; width: 100%; min-height: 68px; padding: 9px; resize: vertical; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
 .actions { display: flex; gap: 8px; margin: 9px 0; }
 .primary { color: #fff; background: #6d5ce7; }

@@ -1174,6 +1174,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadSettings();
   // 学习模式 UI 与状态在独立模块中维护，侧边栏主文件只负责挂载。
   await window.ContextLensLearning?.mount?.();
+  await window.ContextLensLearning?.mountOptions?.();
   setupEventListeners();
   setRequestRunningState(false);
 
@@ -3896,6 +3897,49 @@ async function handleSendMessage() {
   // Ensure runtime settings are consistent before any request is built/sent.
   await syncRuntimeSettingsForTab(messageTabId);
 
+  // 首轮学习请求先由 LLM 判断选区是否足够；后续追问沿用首轮已保存的上下文。
+  let activeLearningOptions = null;
+  const learningNotice = document.getElementById("learning-context-notice");
+  const canPlanLearningContext = window.ContextLensLearning?.isLearningMode?.()
+    && !appSettings.apiProvider.endsWith("-agent")
+    && currentContext?.contextData?.selectedText
+    && chatHistory.length === 0;
+  if (canPlanLearningContext) {
+    activeLearningOptions = await window.ContextLensLearningOptions.get();
+    if (learningNotice) {
+      learningNotice.hidden = false;
+      learningNotice.textContent = activeLearningOptions.contextMode === "manual"
+        ? `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`
+        : "正在评估选区是否足够回答…";
+    }
+    try {
+      const runtimeDefaults = window.ContextLensRuntimeConfig?.getDefaults?.() || {};
+      const prepared = await window.ContextLensLearningContextFlow.prepare({
+        tabId: messageTabId,
+        context: currentContext.contextData,
+        question: text,
+        options: activeLearningOptions,
+        model: {
+          provider: appSettings.apiProvider,
+          apiKey: appSettings.apiKey,
+          apiUrl: appSettings.apiUrl,
+          apiEndpoint: runtimeDefaults.provider === appSettings.apiProvider ? runtimeDefaults.apiEndpoint : "",
+          model: appSettings.modelName
+        }
+      });
+      if (prepared.status === "needs-user-context") {
+        if (learningNotice) learningNotice.textContent = `需要更多上下文：${prepared.message} 请粘贴相关内容后重新发送。`;
+        return;
+      }
+      currentContext = { ...currentContext, contextData: prepared.context };
+      if (messageTabId) getTabState(messageTabId).currentContext = currentContext;
+      if (learningNotice) learningNotice.hidden = true;
+    } catch (error) {
+      if (learningNotice) learningNotice.textContent = `上下文评估失败：${error.message}，请稍后重试。`;
+      return;
+    }
+  }
+
   // Clear input area immediately
   chatInput.value = "";
   chatInput.style.height = "auto";
@@ -3976,7 +4020,8 @@ async function handleSendMessage() {
           pageUrl: currentContext.pageUrl,
           instruction: text,
           includeFullPage: shouldIncludeFullPage,
-          imageContext: buildImageContextBlock(contextImages)
+          imageContext: buildImageContextBlock(contextImages),
+          options: activeLearningOptions || await window.ContextLensLearningOptions.get()
         });
       } else if (appSettings.apiProvider.endsWith("-agent") && effectiveCwd) {
         // Agent mode: only for local/dev pages with workspace configured

@@ -28,3 +28,16 @@
   color: #666;
   font-size: 11px;
 }
+
+/* 学习请求选项：紧凑地放在回答模式下方，避免干扰主聊天区。 */
+.learning-request-options {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(64px, .55fr);
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.learning-request-options label { font-size: 12px; }
+.learning-request-options select { min-width: 0; }
+.learning-request-options .is-disabled { opacity: .5; }
+.learning-context-notice { grid-column: 1 / -1; color: #a16207; }

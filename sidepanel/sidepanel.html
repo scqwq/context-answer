@@ -139,10 +139,26 @@
           <div class="learning-mode-control">
             <label for="learning-mode-select">回答模式</label>
             <select id="learning-mode-select">
-              <option value="learning">学习解释：翻译 / 含义 / 作用 / 结构</option>
+              <option value="learning">学习解释：简洁解释 / 关键点</option>
               <option value="chat">通用问答</option>
             </select>
-            <small id="learning-mode-hint">将按翻译、含义、作用和结构回答。</small>
+            <small id="learning-mode-hint">将按简洁解释和关键点回答。</small>
+          </div>
+          <div class="learning-mode-control learning-request-options">
+            <label for="learning-source-language">语言提示</label>
+            <select id="learning-source-language"></select>
+            <label for="learning-context-mode">上下文</label>
+            <select id="learning-context-mode">
+              <option value="auto">自动选择</option>
+              <option value="manual">手动选择</option>
+            </select>
+            <label for="learning-manual-lines">上下各</label>
+            <select id="learning-manual-lines">
+              <option value="5">5 行</option>
+              <option value="10">10 行</option>
+              <option value="20">20 行</option>
+            </select>
+            <small id="learning-context-notice" class="learning-context-notice" hidden></small>
           </div>
 
           <div class="context-meta">
@@ -438,10 +454,15 @@
   <script src="config.local.js"></script>
   <script src="config.js"></script>
   <script src="learning/mode-state.js"></script>
+  <script src="../shared/learning-options.js"></script>
   <script src="../shared/learning-prompt.js"></script>
+  <script src="../shared/context-assessment.js"></script>
+  <script src="../shared/context-orchestrator.js"></script>
   <script src="../shared/request-diagnostics.js"></script>
   <script src="learning/prompt-builder.js"></script>
   <script src="learning/mode-ui.js"></script>
+  <script src="learning/options-ui.js"></script>
+  <script src="learning/context-flow.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

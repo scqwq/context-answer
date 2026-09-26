@@ -1,7 +1,7 @@
 // Background Service Worker for ContextLens
 // 先加载独立能力路由与网页内面板的流式客户端；本地 .env 生成文件缺失时安全回退。
 try { importScripts("sidepanel/config.local.js"); } catch (error) { console.warn("[ContextLens] 未生成本地环境配置：", error.message); }
-importScripts("sidepanel/config.js", "shared/learning-prompt.js", "shared/request-diagnostics.js", "background/panel-capabilities.js", "background/fallback-chat.js");
+importScripts("sidepanel/config.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/context-assessment.js", "shared/context-orchestrator.js", "shared/request-diagnostics.js", "background/panel-capabilities.js", "background/fallback-chat.js");
 
 // Track which tabs have side panel active
 let activeSidePanelTabs = new Set();
@@ -388,7 +388,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       tabId,
       requestId: message.requestId,
       payload: message.payload,
-      instruction: message.instruction
+      instruction: message.instruction,
+      requestOptions: message.requestOptions
     }).catch(async (error) => {
       await ContextLensRequestDiagnostics.record({
         surface: "in-page-panel",
@@ -412,6 +413,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ContextLensRequestDiagnostics.list(15)
       .then((entries) => sendResponse({ success: true, entries }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "GET_LEARNING_OPTIONS") {
+    ContextLensLearningOptions.get()
+      .then((options) => sendResponse({ success: true, options }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "SET_LEARNING_OPTIONS") {
+    ContextLensLearningOptions.set(message.options || {})
+      .then((options) => sendResponse({ success: true, options }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "ASSESS_LEARNING_CONTEXT") {
+    const model = message.model || {};
+    if (!model.provider || model.provider.endsWith("-agent")) {
+      sendResponse({ success: false, error: "当前模型不支持上下文评估。" });
+      return false;
+    }
+    const transport = model.apiEndpoint ? "direct-endpoint" : "streaming-api";
+    ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-started", provider: model.provider, transport })
+      .then(() => ContextLensFallbackChat.assess(model, String(message.prompt || ""), new AbortController().signal))
+      .then(async (text) => {
+        await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-completed", provider: model.provider, transport });
+        sendResponse({ success: true, text });
+      })
+      .catch(async (error) => {
+        await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-failed", provider: model.provider, transport, status: error.status || null, error: error.message });
+        sendResponse({ success: false, error: error.message });
+      });
     return true;
   }
 

@@ -8,7 +8,7 @@
       await global.ContextLensLearning.setMode(select.value);
       const hint = document.getElementById("learning-mode-hint");
       if (hint) hint.textContent = select.value === "learning"
-        ? "将按翻译、含义、作用和结构回答。"
+        ? "将按简洁解释和关键点回答。"
         : "沿用原有自由问答提示词。";
     });
   }

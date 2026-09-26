@@ -22,9 +22,21 @@
       model,
       useLocalModel,
       isConfigured: Boolean(provider && model && (provider === "custom" ? (apiUrl || source.apiEndpoint) : apiKey)),
+      learning: {
+        translationEnabled: raw.learning?.translationEnabled !== false,
+        targetLanguage: String(raw.learning?.targetLanguage || "zh-CN"),
+        responseDetail: raw.learning?.responseDetail === "normal" ? "normal" : "compact",
+        sourceLanguage: String(raw.learning?.sourceLanguage || "auto"),
+        contextMode: raw.learning?.contextMode === "manual" ? "manual" : "auto",
+        manualLines: [5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5
+      },
       bridgeUrl: String(raw.bridgeUrl || source.bridgeUrl || "")
     };
   }
 
-  global.ContextLensRuntimeConfig = { getDefaults };
+  function getLearningDefaults() {
+    return getDefaults().learning;
+  }
+
+  global.ContextLensRuntimeConfig = { getDefaults, getLearningDefaults };
 })(globalThis);

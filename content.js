@@ -3,6 +3,7 @@
 let floatBtn = null;
 let currentSelectionText = "";
 let currentSelectionContext = null; // Caches rich DOM context on selection mouseup
+let currentSelectionRange = null; // 保留选区 Range，供自动上下文扩展按行重新采集。
 let lastRightClickElement = null;
 let lastRightClickContext = null; // Caches rich DOM context on right click
 let cachedUiLanguage = null;
@@ -191,6 +192,50 @@ function getSurroundingText(range, charLimit = 800) {
     console.warn("🔮 [ContextLens] Error capturing surrounding text window:", e);
   }
   return { before: "", after: "" };
+}
+
+// 按逻辑行截取选区附近内容；代码使用源码行，普通网页使用可见文本行。
+function buildLineWindow(fullText, selectedText, radius, kind) {
+  const lines = String(fullText || "").replace(/\r/g, "").split("\n");
+  const selectedLines = String(selectedText || "").replace(/\r/g, "").split("\n").filter(Boolean);
+  const firstNeedle = selectedLines[0]?.trim() || String(selectedText || "").trim();
+  let start = lines.findIndex((line) => firstNeedle && line.includes(firstNeedle));
+  if (start < 0) start = 0;
+  const end = Math.min(lines.length - 1, start + Math.max(0, selectedLines.length - 1));
+  const beforeStart = Math.max(0, start - radius);
+  const afterEnd = Math.min(lines.length, end + radius + 1);
+  return {
+    before: lines.slice(beforeStart, start).join("\n").trim(),
+    selected: lines.slice(start, end + 1).join("\n").trim() || String(selectedText || "").trim(),
+    after: lines.slice(end + 1, afterEnd).join("\n").trim(),
+    windowText: lines.slice(beforeStart, afterEnd).join("\n").trim(),
+    contextWindow: { radius, kind, startLine: start + 1, endLine: end + 1, totalLines: lines.length }
+  };
+}
+
+// 基于仍在页面中的选区或右键元素生成有限窗口，避免把完整代码块默认发送给模型。
+function buildExpandedContext(radius) {
+  const base = currentSelectionContext || lastRightClickContext;
+  const anchor = currentSelectionRange?.commonAncestorContainer || lastRightClickElement;
+  if (!base || !anchor) return base;
+  const safeRadius = [0, 5, 10, 20].includes(Number(radius)) ? Number(radius) : 5;
+  const result = { ...base, surroundingBefore: "", surroundingAfter: "" };
+  const code = findEnclosingCodeBlock(anchor);
+  if (code) {
+    const window = buildLineWindow(code.fullCode, base.selectedText, safeRadius, "code-line");
+    result.codeBlock = { ...code, fullCode: window.windowText };
+    result.selectedText = base.selectedText;
+    result.contextWindow = window.contextWindow;
+    return result;
+  }
+
+  const element = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : anchor;
+  const root = element?.closest?.("article, main, [role='main'], section, .markdown-body, .article-content, .content") || element?.parentElement || document.body;
+  const window = buildLineWindow(root?.innerText || "", base.selectedText, safeRadius, "text-line");
+  result.surroundingBefore = window.before;
+  result.surroundingAfter = window.after;
+  result.contextWindow = window.contextWindow;
+  return result;
 }
 
 function dedupeAndClampImages(images, maxImages = 5) {
@@ -506,6 +551,7 @@ function showButtonAtSelection(selection) {
     btn.classList.remove("contextlens-hidden");
 
     // --- POPULATE RICH SEMANTIC CONTEXT ---
+    currentSelectionRange = range.cloneRange();
     const ancestor = range.commonAncestorContainer;
     const enclosingCode = findEnclosingCodeBlock(ancestor);
     const enclosingTable = findEnclosingTable(ancestor);
@@ -862,6 +908,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (e) {
       console.warn("🔮 [ContextLens] Error compiling page-only context:", e);
       sendResponse({ success: false, error: e.toString() });
+    }
+  } else if (message.type === "GET_CONTEXT_WINDOW") {
+    try {
+      const contextData = buildExpandedContext(Number(message.radius || 5));
+      sendResponse(contextData
+        ? { success: true, contextData }
+        : { success: false, error: "原选区已失效，请重新选择内容。" });
+    } catch (e) {
+      console.warn("🔮 [ContextLens] Error expanding context window:", e);
+      sendResponse({ success: false, error: "无法扩展选区上下文，请重新选择内容。" });
     }
   }
   return true;

@@ -25,6 +25,9 @@
 | `sidepanel/sidepanel.js` | 既有会话、模型请求、状态恢复主入口 | 新功能尽量只增加调用点，业务逻辑放独立目录 |
 | `sidepanel/learning/` | 学习模式的状态、UI、提示词和样式 | 新学习能力按职责拆文件，避免回填主文件 |
 | `shared/learning-prompt.js` | 侧边栏与网页内面板共用的学习提示词契约 | 不依赖 DOM 或单个浏览器 API |
+| `shared/learning-options.js` | 学习请求的语言、上下文和回答风格选项 | 面板设置优先，翻译等策略由 `.env` 提供默认值 |
+| `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
+| `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式按 0、5、10、20 行评估；20 行仍不足时要求用户补充 |
 | `shared/request-diagnostics.js` | LLM 调用的脱敏诊断记录 | 仅保存阶段、供应商、传输方式、HTTP 状态和错误摘要，严禁记录密钥、URL、选区或回答 |
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
 | `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口 |
@@ -44,7 +47,8 @@
   -> background/panel-capabilities.js 选择面板宿主
   -> 支持 chrome.sidePanel：sidepanel.js 接收并发送请求
   -> 不支持：fallback/in-page-panel.js 显示网页右侧面板
-  -> background/fallback-chat.js 发起模型流并把文本块回传
+  -> LLM 评估选区是否充分 -> 必要时 content.js 重取上下各 5 / 10 / 20 行
+  -> background/fallback-chat.js 发起最终模型流并把文本块回传
 ```
 
 ## 配置参数
@@ -59,6 +63,12 @@
 | `CONTEXTLENS_API_URL` | `https://provider.example/v1` | 远程 OpenAI 兼容接口基地址；未设完整 Endpoint 时自动补 `/chat/completions` |
 | `CONTEXTLENS_API_ENDPOINT` | `https://provider.example/api/chat` | 可选完整请求地址；填写后原样请求，不会拼接路径 |
 | `CONTEXTLENS_MODEL` | `gpt-4o-mini` | 远程模型标识 |
+| `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | `true` | 学习解释默认是否包含翻译；面板语言/上下文选择可单次覆盖其他设置 |
+| `CONTEXTLENS_LEARNING_TARGET_LANGUAGE` | `zh-CN` | 学习回答和翻译的默认目标语言 |
+| `CONTEXTLENS_LEARNING_RESPONSE_DETAIL` | `compact` | `compact`（默认短答）或 `normal` |
+| `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
+| `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
+| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，只支持 5 / 10 / 20 |
 | `CONTEXTLENS_LOCAL_API_URL` / `CONTEXTLENS_LOCAL_MODEL` | `http://localhost:11434/v1` / `qwen2.5-coder:7b` | 仅本地开关开启后生效的本地模型配置 |
 | `CONTEXTLENS_BRIDGE_URL` | `http://localhost:3100` | 可选本地 Agent Bridge 地址 |
 
@@ -76,6 +86,8 @@ npm run bridge  # 只有本地 Agent 模式需要
 ## LLM 调用诊断
 
 网页内面板右上角的“诊断”会显示最近 15 条脱敏运行日志；日志实际保存在扩展的 `chrome.storage.local`，以便浏览器扩展在无本机文件写入权限时仍能稳定记录。每条日志包含时间、展示面板、阶段、供应商、传输方式、HTTP 状态（如有）和错误摘要；不会保存 API Key、完整 URL、选区、提示词、请求头或模型回答。静态排查记录放在 `diagnostics/`。
+
+自动上下文会额外产生短的“充分性评估”模型请求。评估请求不展示给用户；模型只返回 JSON 决策。最终回答才使用流式请求。若 20 行仍不足，界面必须明确告诉用户缺少什么，不能继续自动扩大到全文。
 
 ## 重要边界与安全要求
 

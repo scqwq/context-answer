@@ -123,18 +123,76 @@
     });
   }
 
-  async function start({ tabId, requestId, payload, instruction }) {
+  // 评估阶段使用非流式短请求；与最终答案的流式请求分离，便于稳定解析 JSON。
+  async function completeOpenAiCompatible(model, prompt, signal) {
+    const baseUrl = model.provider === "openai" ? "https://api.openai.com/v1" : String(model.apiUrl || "").replace(/\/+$/, "");
+    const url = String(model.apiEndpoint || "").trim() || (baseUrl ? `${baseUrl}/chat/completions` : "");
+    const headers = { "Content-Type": "application/json" };
+    if (model.apiKey) headers.Authorization = `Bearer ${model.apiKey}`;
+    const response = await fetch(url, { method: "POST", signal, headers, body: JSON.stringify({ model: model.model, messages: [{ role: "user", content: prompt }], temperature: 0, stream: false }) });
+    if (!response.ok) await throwResponseError(response, `上下文评估失败（${response.status}）。`);
+    return (await response.json()).choices?.[0]?.message?.content || "";
+  }
+
+  async function completeGemini(model, prompt, signal) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.model}:generateContent?key=${model.apiKey}`;
+    const response = await fetch(url, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } }) });
+    if (!response.ok) await throwResponseError(response, `Gemini 上下文评估失败（${response.status}）。`);
+    return (await response.json()).candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+  }
+
+  async function completeClaude(model, prompt, signal) {
+    const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", signal, headers: { "content-type": "application/json", "x-api-key": model.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: model.model, max_tokens: 300, temperature: 0, messages: [{ role: "user", content: prompt }] }) });
+    if (!response.ok) await throwResponseError(response, `Claude 上下文评估失败（${response.status}）。`);
+    return (await response.json()).content?.map((part) => part.text || "").join("") || "";
+  }
+
+  async function assess(model, prompt, signal) {
+    if (model.provider === "gemini") return completeGemini(model, prompt, signal);
+    if (model.provider === "claude") return completeClaude(model, prompt, signal);
+    return completeOpenAiCompatible(model, prompt, signal);
+  }
+
+  async function start({ tabId, requestId, payload, instruction, requestOptions }) {
     const context = payload?.contextData;
     if (!context) throw new Error("未收到选区上下文。");
     const model = await resolveModel();
     if (!model.provider || model.provider.endsWith("-agent")) throw new Error("网页内学习面板仅支持 API 模型，请配置 Gemini、OpenAI、Claude 或自定义兼容接口。");
     const controller = new AbortController();
     requests.set(requestId, controller);
-    const prompt = global.ContextLensLearningPrompt.buildPrompt({ context, pageTitle: payload.pageTitle, pageUrl: payload.pageUrl, instruction });
     const sendChunk = (text) => event(tabId, requestId, { event: "chunk", text });
     const transport = model.apiEndpoint ? "direct-endpoint" : "openai-compatible-base-url";
-    await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "started", provider: model.provider, transport });
     try {
+      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "context-preparation-started", provider: model.provider, transport });
+      const options = global.ContextLensLearningOptions.normalize(requestOptions || await global.ContextLensLearningOptions.get());
+      const prepared = await global.ContextLensContextOrchestrator.prepare({
+        context,
+        question: instruction,
+        options,
+        assess: async (candidate, radius) => {
+          await event(tabId, requestId, { event: "status", text: radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…` });
+          const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), radius });
+          return assess(model, assessmentPrompt, controller.signal);
+        },
+        expand: async (radius) => {
+          await event(tabId, requestId, { event: "status", text: `信息不足，正在读取上下各 ${radius} 行…` });
+          const response = await chrome.tabs.sendMessage(tabId, { type: "GET_CONTEXT_WINDOW", radius }).catch(() => null);
+          return response?.success ? response.contextData : null;
+        }
+      });
+      if (prepared.status === "needs-user-context") {
+        await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "needs-user-context", provider: model.provider, transport, error: prepared.message });
+        await event(tabId, requestId, { event: "needs-context", message: prepared.message });
+        return;
+      }
+      const prompt = global.ContextLensLearningPrompt.buildPrompt({
+        context: prepared.context,
+        pageTitle: payload.pageTitle,
+        pageUrl: payload.pageUrl,
+        instruction,
+        options: { ...options, sourceLanguageLabel: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), contextModeLabel: options.contextMode === "manual" ? `手动上下各 ${options.manualLines} 行` : "自动选择" }
+      });
+      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "started", provider: model.provider, transport });
       if (model.provider === "gemini") await streamGemini(model, prompt, controller.signal, sendChunk);
       else if (model.provider === "claude") await streamClaude(model, prompt, controller.signal, sendChunk);
       else await streamOpenAiCompatible(model, prompt, controller.signal, sendChunk);
@@ -148,5 +206,5 @@
     }
   }
 
-  global.ContextLensFallbackChat = { start };
+  global.ContextLensFallbackChat = { start, assess };
 })(globalThis);
