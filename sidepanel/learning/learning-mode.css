@@ -1,0 +1,30 @@
+/* 学习模式控件：独立样式，避免污染现有聊天与设置界面。 */
+.learning-mode-control {
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid rgba(108, 92, 231, 0.22);
+  border-radius: 10px;
+  background: rgba(108, 92, 231, 0.06);
+}
+
+.learning-mode-control label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.learning-mode-control select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.learning-mode-control small {
+  display: block;
+  margin-top: 6px;
+  color: #666;
+  font-size: 11px;
+}

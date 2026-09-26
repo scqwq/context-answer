@@ -10,6 +10,7 @@ build/
 .env
 .env.local
 .env.*.local
+sidepanel/config.local.js
 
 # Logs
 *.log

@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@sking7/agent-cli-unified':
+        specifier: ^1.0.6
+        version: 1.0.6
+
+packages:
+
+  '@sking7/agent-cli-unified@1.0.6':
+    resolution: {integrity: sha512-y7cR8AXB+cELTV/XIGLmUn5UvC6WarK74ZwuB0Y5SHeo7DfOTyZ+v/CFK3XQrM42k5dSyqtLV9/wiAhesoMxSg==}
+
+snapshots:
+
+  '@sking7/agent-cli-unified@1.0.6': {}

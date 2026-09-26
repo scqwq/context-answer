@@ -82,7 +82,8 @@ let configuredApiModels = [];
 let detectedLocalAgents = [];
 
 // Bridge URL used for local agents
-const DEFAULT_BRIDGE_URL = "http://localhost:3100";
+// 本地 Bridge 地址优先读取由 .env 生成的运行时配置，未配置时保持原默认值。
+const DEFAULT_BRIDGE_URL = window.ContextLensRuntimeConfig?.getDefaults?.().bridgeUrl || "http://localhost:3100";
 
 let activeFormProvider = "gemini";
 
@@ -1171,6 +1172,8 @@ function isAbortError(err) {
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadSettings();
+  // 学习模式 UI 与状态在独立模块中维护，侧边栏主文件只负责挂载。
+  await window.ContextLensLearning?.mount?.();
   setupEventListeners();
   setRequestRunningState(false);
 
@@ -1288,11 +1291,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 // Load settings from chrome.storage.local
 async function loadSettings() {
   const result = await chrome.storage.local.get(["apiProvider", "apiKey", "apiUrl", "modelName", "temperature", "customModels", "cwd", "commandPath", "claudePath", "providers", "urlSwitchRules", "addedProviderModels", "configuredApiModels", "activeModelId", "defaultModelId", "tabStates", "uiLanguage", "contextMenuModelIds"]);
+  // .env 只作为首次启动的默认值；用户在设置面板保存后的配置优先级更高。
+  const runtimeDefaults = window.ContextLensRuntimeConfig?.getDefaults?.() || {};
   
   tabStates = result.tabStates || {};
   uiLanguage = result.uiLanguage === "en" ? "en" : "zh";
   applyI18nToStaticUI();
-  appSettings.apiProvider = normalizeLocalAgentId(result.apiProvider || "gemini");
+  appSettings.apiProvider = normalizeLocalAgentId(result.apiProvider || runtimeDefaults.provider || "gemini");
   appSettings.temperature = result.temperature !== undefined ? parseFloat(result.temperature) : 0.7;
 
   // Set up providers config cache with robust fallback defaults
@@ -1332,6 +1337,15 @@ async function loadSettings() {
     normalizedConfig.commandPath = sanitizeLocalAgentCommandPath(provId, normalizedConfig.commandPath);
     delete normalizedConfig.claudePath;
     appSettings.providers[provId] = { ...defConfig, ...normalizedConfig };
+    if (provId === runtimeDefaults.provider) {
+      appSettings.providers[provId] = {
+        ...appSettings.providers[provId],
+        // 已保存的单项配置优先；缺失项才由 .env 补齐，避免空对象屏蔽本地默认值。
+        apiKey: savedConfig.apiKey || runtimeDefaults.apiKey || appSettings.providers[provId].apiKey,
+        apiUrl: savedConfig.apiUrl || runtimeDefaults.apiUrl || appSettings.providers[provId].apiUrl,
+        modelName: savedConfig.modelName || runtimeDefaults.model || appSettings.providers[provId].modelName
+      };
+    }
   }
 
   // Backward compatibility migration:
@@ -1388,7 +1402,10 @@ async function loadSettings() {
     ];
     for (const { provider, provId, labelBase, defaultModel } of legacyMigrations) {
       const savedProv = appSettings.providers[provId] || {};
-      if (savedProv.apiKey && savedProv.apiKey.trim()) {
+      // 自定义本地模型（如 Ollama）通常没有 API Key，URL 和模型名齐全即可成为可选模型。
+      const canCreateModel = (savedProv.apiKey && savedProv.apiKey.trim()) ||
+        (provId === "custom" && savedProv.apiUrl && savedProv.modelName);
+      if (canCreateModel) {
         configuredApiModels.push({
           id: `${provId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           provider,
@@ -3948,7 +3965,20 @@ async function handleSendMessage() {
     const cd = currentContext.contextData;
     if (cd) {
       const contextImages = includeSelectionImagesChecked ? getContextImages(cd, 5) : [];
-      if (appSettings.apiProvider.endsWith("-agent") && effectiveCwd) {
+      const includeFullPageToggle = document.getElementById("include-full-page-context");
+      const shouldIncludeFullPage = (includeFullPageToggle && includeFullPageToggle.checked) || (!currentContext || !currentContext.text);
+      const isLearningMode = window.ContextLensLearning?.isLearningMode?.() && !appSettings.apiProvider.endsWith("-agent");
+      if (isLearningMode) {
+        // 学习模式的提示词结构由 learning/prompt-builder.js 独立维护。
+        fullPrompt = window.ContextLensLearning.buildPrompt({
+          context: cd,
+          pageTitle: currentContext.pageTitle,
+          pageUrl: currentContext.pageUrl,
+          instruction: text,
+          includeFullPage: shouldIncludeFullPage,
+          imageContext: buildImageContextBlock(contextImages)
+        });
+      } else if (appSettings.apiProvider.endsWith("-agent") && effectiveCwd) {
         // Agent mode: only for local/dev pages with workspace configured
         const workspaceHeader = `You are a local agentic coding assistant running directly in the user's project workspace folder: ${effectiveCwd}.`;
         const hasSnippet = !!cd.selectedText;
@@ -4002,8 +4032,6 @@ The user highlighted the following specific cell text:
         fullPrompt += buildImageContextBlock(contextImages);
 
         // Append simplified full-page context if checkbox is checked or if we are in page-only mode (no text selection)
-        const includeFullPageToggle = document.getElementById("include-full-page-context");
-        const shouldIncludeFullPage = (includeFullPageToggle && includeFullPageToggle.checked) || (!currentContext || !currentContext.text);
         if (shouldIncludeFullPage && cd.fullPageSimplifiedText) {
           fullPrompt += `\n[Full Page Simplified Context]\nBelow is a token-efficient, simplified extraction of the main body of this webpage:\n"""\n${cd.fullPageSimplifiedText}\n"""\n`;
         }
@@ -4065,8 +4093,6 @@ The user highlighted the following specific cell text:
         fullPrompt += buildImageContextBlock(contextImages);
 
         // Append simplified full-page context if checkbox is checked or if we are in page-only mode (no text selection)
-        const includeFullPageToggle = document.getElementById("include-full-page-context");
-        const shouldIncludeFullPage = (includeFullPageToggle && includeFullPageToggle.checked) || (!currentContext || !currentContext.text);
         if (shouldIncludeFullPage && cd.fullPageSimplifiedText) {
           fullPrompt += `\n[Full Page Simplified Context]\nBelow is a token-efficient, simplified extraction of the main body of this webpage:\n"""\n${cd.fullPageSimplifiedText}\n"""\n`;
         }
@@ -4959,6 +4985,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
 
   // Check configs
   if (!appSettings.apiKey && appSettings.apiProvider !== "custom" && !appSettings.apiProvider.endsWith("-agent")) {
+    void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "failed-before-request", provider: appSettings.apiProvider, transport: "configuration", error: "缺少 API Key" });
     requestState.activeAbortController = null;
     appendMessage("assistant", t("chat.config_incomplete"));
     return;
@@ -5019,6 +5046,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
   try {
     const cleanHistory = getFilteredChatHistory(chatHistory.slice(0, -1));
     const { apiProvider, apiKey, apiUrl, modelName, temperature } = appSettings;
+    void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "started", provider: apiProvider, transport: apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api" });
     const rawContextImages = getContextImages(currentContext?.contextData, 5);
     const contextImages = await resolveContextImagesForPayload(rawContextImages, includeSelectionImagesChecked);
     const canUseStructuredImages = supportsStructuredImageInput(apiProvider, modelName);
@@ -5207,7 +5235,10 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
 
     // --- OPENAI or CUSTOM OPENAI-COMPATIBLE API STREAM ---
     } else if (apiProvider === "openai" || apiProvider === "custom") {
-      const url = apiProvider === "openai" ? "https://api.openai.com/v1/chat/completions" : `${apiUrl}/chat/completions`;
+      // .env 可选提供完整 Endpoint；未提供时按 OpenAI 兼容规范从基地址拼接 chat/completions。
+      const runtimeEndpoint = window.ContextLensRuntimeConfig?.getDefaults?.();
+      const directEndpoint = runtimeEndpoint?.provider === apiProvider ? String(runtimeEndpoint.apiEndpoint || "").trim() : "";
+      const url = directEndpoint || (apiProvider === "openai" ? "https://api.openai.com/v1/chat/completions" : `${apiUrl}/chat/completions`);
       
       console.log("[DEBUG] Sending request to OpenAI-compatible API:", {
         url,
@@ -5633,12 +5664,14 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       }
     }
 
+    void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "completed", provider: appSettings.apiProvider, transport: appSettings.apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api" });
     commitStreamStatePersist();
     saveChatHistory(targetTabId);
 
   } catch (err) {
     const wasUserAbort = requestState.userAbortRequested || isAbortError(err);
     if (wasUserAbort) {
+      void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "cancelled", provider: appSettings.apiProvider, transport: "streaming-api" });
       requestState.activeReader = null;
       assistantMsgObj.isAgentComplete = true;
       if (!assistantMsgObj.content || !assistantMsgObj.content.trim()) {
@@ -5660,6 +5693,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
     }
 
     console.error("ContextLens AI stream failed:", err);
+    void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "failed", provider: appSettings.apiProvider, transport: appSettings.apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api", error: err.message });
     const errMsg = t("chat.request_failed", {
       error: err.message || t("chat.network_error")
     });

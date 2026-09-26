@@ -1,4 +1,7 @@
 // Background Service Worker for ContextLens
+// 先加载独立能力路由与网页内面板的流式客户端；本地 .env 生成文件缺失时安全回退。
+try { importScripts("sidepanel/config.local.js"); } catch (error) { console.warn("[ContextLens] 未生成本地环境配置：", error.message); }
+importScripts("sidepanel/config.js", "shared/learning-prompt.js", "shared/request-diagnostics.js", "background/panel-capabilities.js", "background/fallback-chat.js");
 
 // Track which tabs have side panel active
 let activeSidePanelTabs = new Set();
@@ -134,13 +137,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 function enableSidePanelForTab(tabId, { silent = false } = {}) {
-  if (!tabId) return Promise.resolve();
+  if (!tabId || !ContextLensPanelCapabilities.supportsNativeSidePanel()) return Promise.resolve(false);
   activeSidePanelTabs.add(tabId);
-  return chrome.sidePanel.setOptions({
-    tabId,
-    path: SIDE_PANEL_PATH,
-    enabled: true
-  }).catch((err) => {
+  return ContextLensPanelCapabilities.prepareNativePanel(tabId).catch((err) => {
     if (!silent) {
       console.warn(`🔮 [ContextLens Background] Failed to enable side panel for tab ${tabId}:`, err);
     }
@@ -191,43 +190,21 @@ function buildFallbackContextFromMenuInfo(info, tab) {
   };
 }
 
-// Disable side panel globally by default on background script startup
-chrome.sidePanel.setOptions({
-  enabled: false
-}).catch((err) => {
-  console.warn("🔮 [ContextLens Background] Failed to disable side panel globally on startup:", err);
-});
+// 仅在浏览器实现原生 Side Panel 时初始化，避免不支持该 API 的浏览器使后台崩溃。
+ContextLensPanelCapabilities.disableNativeByDefault();
 
 // Create Context Menu on install and disable side panel globally by default
 chrome.runtime.onInstalled.addListener(() => {
   rebuildContextMenus();
 
-  // Disable side panel globally by default
-  chrome.sidePanel.setOptions({
-    enabled: false
-  });
+  ContextLensPanelCapabilities.disableNativeByDefault();
 });
 
 // Handle toolbar action clicks (extension icon)
 chrome.action.onClicked.addListener((tab) => {
-  enableSidePanelForTab(tab.id);
-  
-  // Open the side panel synchronously to preserve user gesture
-  chrome.sidePanel.open({ tabId: tab.id }).catch((err) => {
-    console.error("🔮 [ContextLens Background] Failed to open side panel on icon click:", err);
-  });
-
-  // Set a baseline empty selection payload asynchronously
-  chrome.storage.session.set({
-    lastSelection: {
-      tabId: tab.id,
-      text: "",
-      pageUrl: tab.url,
-      pageTitle: tab.title,
-      timestamp: Date.now(),
-      contextData: null
-    }
-  });
+  const payload = { tabId: tab.id, text: "", pageUrl: tab.url, pageTitle: tab.title, timestamp: Date.now(), contextData: null };
+  chrome.storage.session.set({ lastSelection: payload });
+  ContextLensPanelCapabilities.open(tab.id, payload).catch((err) => console.error("🔮 [ContextLens Background] Failed to open panel on icon click:", err));
 });
 
 // Handle Context Menu clicks
@@ -237,12 +214,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
                        info.menuItemId.startsWith("ask-contextlens-model-");
                        
   if (isTargetMenu) {
-    enableSidePanelForTab(tab.id);
-
-    // 1. Open the side panel synchronously for the active tab (preserves gesture)
-    chrome.sidePanel.open({ tabId: tab.id }).catch((err) => {
-      console.error("🔮 [ContextLens Background] Failed to open side panel on context menu click:", err);
-    });
+    // 原生侧栏需在用户手势期间打开；网页内回退面板则等待完整选区上下文。
+    if (ContextLensPanelCapabilities.supportsNativeSidePanel()) {
+      ContextLensPanelCapabilities.open(tab.id, null).catch((err) => {
+        console.error("🔮 [ContextLens Background] Failed to open native panel on context menu click:", err);
+      });
+    }
 
     let selectionPayload = {
       tabId: tab.id,
@@ -313,7 +290,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
-              files: ["content.js"]
+              files: ["shared/learning-prompt.js", "fallback/in-page-panel.js", "content.js"]
             });
             await chrome.scripting.insertCSS({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
@@ -377,6 +354,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       await chrome.storage.session.set({
         lastSelection: selectionPayload
       });
+      if (!ContextLensPanelCapabilities.supportsNativeSidePanel()) {
+        await ContextLensPanelCapabilities.openInPagePanel(tab.id, selectionPayload);
+      }
     })();
   }
 });
@@ -398,15 +378,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "OPEN_SIDE_PANEL") {
-    enableSidePanelForTab(sender.tab.id);
-
-    // 1. Open side panel for the tab synchronously (preserves gesture context across message boundaries)
-    chrome.sidePanel.open({ tabId: sender.tab.id }).catch((err) => {
-      console.error("🔮 [ContextLens Background] Failed to open side panel from content script message:", err);
+  if (message.type === "FALLBACK_CHAT_REQUEST") {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ success: false, error: "无法定位当前浏览器标签页。" });
+      return false;
+    }
+    ContextLensFallbackChat.start({
+      tabId,
+      requestId: message.requestId,
+      payload: message.payload,
+      instruction: message.instruction
+    }).catch(async (error) => {
+      await ContextLensRequestDiagnostics.record({
+        surface: "in-page-panel",
+        phase: "failed-before-request",
+        provider: "unknown",
+        transport: "configuration",
+        error: error.message
+      });
+      await chrome.tabs.sendMessage(tabId, {
+        type: "FALLBACK_STREAM_EVENT",
+        requestId: message.requestId,
+        event: "error",
+        error: error.message || "模型请求失败。"
+      }).catch(() => {});
     });
+    sendResponse({ success: true });
+    return false;
+  }
 
-    // 2. Save selection context with rich payload to session storage and reply asynchronously
+  if (message.type === "GET_REQUEST_DIAGNOSTICS") {
+    ContextLensRequestDiagnostics.list(15)
+      .then((entries) => sendResponse({ success: true, entries }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "OPEN_SIDE_PANEL") {
+    // 保存后统一交给能力路由器决定原生侧栏或网页内面板。
     (async () => {
       try {
         const fallbackUrl = sender.tab?.url || message?.contextData?.pageUrl || "";
@@ -416,17 +426,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         const resolvedMeta = await resolveTabMeta(sender.tab?.id, fallbackUrl, fallbackTitle);
 
-        await chrome.storage.session.set({
-          lastSelection: {
+        const selectionPayload = {
             tabId: sender.tab.id,
             text: message.text,
             pageUrl: resolvedMeta.url || fallbackUrl || "",
             pageTitle: resolvedMeta.title || fallbackTitle || "",
             timestamp: Date.now(),
             contextData: message.contextData || null // Enriched DOM details
-          }
-        });
-        sendResponse({ success: true });
+          };
+        await chrome.storage.session.set({ lastSelection: selectionPayload });
+        const panel = await ContextLensPanelCapabilities.open(sender.tab.id, selectionPayload);
+        sendResponse({ success: true, host: panel.host });
       } catch (err) {
         console.error("Failed to save selection context in message listener:", err);
         sendResponse({ success: false, error: err.message });

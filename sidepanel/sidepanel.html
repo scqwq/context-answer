@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ContextLens</title>
   <link rel="stylesheet" href="sidepanel.css">
+  <link rel="stylesheet" href="learning/learning-mode.css">
 </head>
 <body class="light-theme">
   <div class="app-container">
@@ -132,6 +133,16 @@
               <span class="checkbox-custom"></span>
               <span class="label-text" data-i18n-text="context.include_images_label">💡 本地解析并附带选中图片</span>
             </label>
+          </div>
+
+          <!-- 学习模式控件：具体状态与提示词由 learning/ 目录独立维护。 -->
+          <div class="learning-mode-control">
+            <label for="learning-mode-select">回答模式</label>
+            <select id="learning-mode-select">
+              <option value="learning">学习解释：翻译 / 含义 / 作用 / 结构</option>
+              <option value="chat">通用问答</option>
+            </select>
+            <small id="learning-mode-hint">将按翻译、含义、作用和结构回答。</small>
           </div>
 
           <div class="context-meta">
@@ -423,6 +434,14 @@
     </div>
   </div>
 
+  <!-- 配置与学习模块必须先加载；sidepanel.js 只负责调用它们。 -->
+  <script src="config.local.js"></script>
+  <script src="config.js"></script>
+  <script src="learning/mode-state.js"></script>
+  <script src="../shared/learning-prompt.js"></script>
+  <script src="../shared/request-diagnostics.js"></script>
+  <script src="learning/prompt-builder.js"></script>
+  <script src="learning/mode-ui.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>
