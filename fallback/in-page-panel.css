@@ -18,5 +18,11 @@ textarea { box-sizing: border-box; width: 100%; min-height: 68px; padding: 9px; 
 .primary { color: #fff; background: #6d5ce7; }
 .secondary { color: #553c9a; background: #ede9fe; }
 .answer { min-height: 26px; padding: 10px; white-space: pre-wrap; background: #fafafa; border: 1px solid #ececec; border-radius: 8px; }
+.answer h2 { margin: 10px 0 5px; color: #312e81; font-size: 14px; }
+.answer h2:first-child { margin-top: 0; }
+.answer p { margin: 5px 0; }
+.answer ul { margin: 5px 0; padding-left: 20px; }
+.answer li { margin: 3px 0; }
+.answer code { padding: 1px 4px; color: #4338ca; background: #ede9fe; border-radius: 4px; font: .92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .status { margin: 7px 0; color: #6b7280; font-size: 12px; }
 .error { color: #b91c1c; }

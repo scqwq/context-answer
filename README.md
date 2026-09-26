@@ -4,6 +4,7 @@ ContextLens is a Chrome extension that lets you highlight text on any webpage an
 
 It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravity CLI, Copilot CLI). Through the Bridge Server, selected UI text can be sent directly to your local agent, enabling a seamless workflow from "select text -> locate code -> apply changes".
 
+本项目基于ContextLens修改,原项目 https://github.com/cola-sk/context-lens
 ---
 
 ## Core Features

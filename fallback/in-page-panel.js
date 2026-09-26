@@ -9,6 +9,11 @@
   let currentPayload = null;
   let requestOptions = null;
 
+  function renderAnswer(text) {
+    if (global.ContextLensAnswerRenderer) global.ContextLensAnswerRenderer.render(elements.answer, text);
+    else elements.answer.textContent = text;
+  }
+
   function createPanel() {
     if (host) return;
     host = document.createElement("div");
@@ -80,7 +85,8 @@
     currentPayload = payload || currentPayload;
     const selected = currentPayload?.contextData?.selectedText || currentPayload?.text || "未取得选区";
     elements.context.textContent = selected.slice(0, 1600);
-    elements.answer.textContent = "上下文已载入。可一键学习解释，或输入具体问题。";
+    elements.answer.dataset.rawAnswer = "";
+    renderAnswer("上下文已载入。可一键学习解释，或输入具体问题。");
     elements.status.textContent = "已载入选区";
     elements.status.className = "status";
   }
@@ -92,7 +98,8 @@
       return;
     }
     activeRequestId = `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    elements.answer.textContent = "";
+    elements.answer.dataset.rawAnswer = "";
+    renderAnswer("");
     elements.status.textContent = "正在请求模型…";
     elements.status.className = "status";
     const response = await chrome.runtime.sendMessage({
@@ -133,11 +140,16 @@
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === "OPEN_IN_PAGE_PANEL") open(message.payload);
     if (message.type !== "FALLBACK_STREAM_EVENT" || message.requestId !== activeRequestId || !elements) return;
-    if (message.event === "chunk") elements.answer.textContent += message.text;
+    if (message.event === "chunk") {
+      const next = (elements.answer.dataset.rawAnswer || "") + message.text;
+      elements.answer.dataset.rawAnswer = next;
+      renderAnswer(next);
+    }
     if (message.event === "done") elements.status.textContent = "回答完成";
     if (message.event === "status") elements.status.textContent = message.text;
     if (message.event === "needs-context") {
-      elements.answer.textContent = `需要更多上下文：${message.message}\n\n请将相关定义、调用处或章节内容粘贴到问题框后重新发送。`;
+      elements.answer.dataset.rawAnswer = "";
+      renderAnswer(`## 需要更多上下文\n${message.message}\n\n请将相关定义、调用处或章节内容粘贴到问题框后重新发送。`);
       elements.status.textContent = "自动上下文已达到上下各 20 行";
       elements.status.className = "status error";
       elements.input.focus();

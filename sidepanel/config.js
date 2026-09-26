@@ -24,8 +24,12 @@
       isConfigured: Boolean(provider && model && (provider === "custom" ? (apiUrl || source.apiEndpoint) : apiKey)),
       learning: {
         translationEnabled: raw.learning?.translationEnabled !== false,
-        targetLanguage: String(raw.learning?.targetLanguage || "zh-CN"),
+        responseLanguage: String(raw.learning?.responseLanguage || raw.learning?.targetLanguage || "zh-CN"),
+        translationLanguage: String(raw.learning?.translationLanguage || raw.learning?.targetLanguage || "zh-CN"),
         responseDetail: raw.learning?.responseDetail === "normal" ? "normal" : "compact",
+        outputStyle: raw.learning?.outputStyle === "standard" ? "standard" : "focus",
+        maxKeyPoints: Math.min(5, Math.max(2, Number(raw.learning?.maxKeyPoints) || 3)),
+        codeExamples: ["never", "on-demand", "always"].includes(raw.learning?.codeExamples) ? raw.learning.codeExamples : "on-demand",
         sourceLanguage: String(raw.learning?.sourceLanguage || "auto"),
         contextMode: raw.learning?.contextMode === "manual" ? "manual" : "auto",
         manualLines: [5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5

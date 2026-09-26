@@ -32,6 +32,7 @@
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
 | `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口 |
 | `fallback/` | 无原生侧栏时的 Shadow DOM 右侧学习面板 | 不读取网页样式；只通过消息与后台通信 |
+| `fallback/answer-renderer.js` | 网页内回答的安全有限 Markdown 渲染 | 只创建 DOM 节点，绝不能对模型输出使用 `innerHTML` |
 | `diagnostics/` | 不含敏感信息的故障分析记录 | 记录现象、复现条件、排查顺序与已实施修复 |
 | `sidepanel/config.js` | 读取生成后的本地运行时默认配置 | 不写真实密钥 |
 | `scripts/build-env.js` | `.env` 转 `sidepanel/config.local.js` | 远程/本地模型由显式开关选择，只允许白名单参数进入扩展 |
@@ -51,6 +52,16 @@
   -> background/fallback-chat.js 发起最终模型流并把文本块回传
 ```
 
+### 学习请求布局与编排细则
+
+- 原生侧边栏在“回答模式”下依次显示：语言提示、上下文模式、手动行数。网页内回退面板在选区预览下显示同一组控件。语言与上下文选择会保存到 `chrome.storage.local`。
+- 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
+- 上下文模式：`auto` 先将最小选区交给 LLM 充分性评估；模型返回 JSON 后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 直接取用户选定的上下各 5/10/20 行。
+- 自动模式最多评估四次（0、5、10、20）；模型 JSON 不可解析时立即回退为当前选区回答，禁止循环重试；20 行仍不足时提示用户粘贴模型指定的定义、调用处或章节内容。
+- 评估请求使用非流式短响应，最终学习回答才使用流式响应；两类阶段均写入脱敏诊断日志。
+- `content.js` 的 `GET_CONTEXT_WINDOW` 是上下文扩展入口。代码按源码行取窗口；普通网页按可见文本逻辑行取窗口。不要把该接口改成默认全文采集。
+- 网页内面板的回答必须通过 `fallback/answer-renderer.js` 安全渲染有限 Markdown；禁止用 `innerHTML` 渲染模型原始输出。
+
 ## 配置参数
 
 根目录 `.env` 的值不会被浏览器直接读取。修改后必须执行 `npm run build:env`，它会生成被忽略的 `sidepanel/config.local.js`；随后在扩展管理页面重新加载扩展。
@@ -64,8 +75,12 @@
 | `CONTEXTLENS_API_ENDPOINT` | `https://provider.example/api/chat` | 可选完整请求地址；填写后原样请求，不会拼接路径 |
 | `CONTEXTLENS_MODEL` | `gpt-4o-mini` | 远程模型标识 |
 | `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | `true` | 学习解释默认是否包含翻译；面板语言/上下文选择可单次覆盖其他设置 |
-| `CONTEXTLENS_LEARNING_TARGET_LANGUAGE` | `zh-CN` | 学习回答和翻译的默认目标语言 |
+| `CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE` | `zh-CN` | 学习回答的默认语言；旧 `TARGET_LANGUAGE` 仍兼容 |
+| `CONTEXTLENS_LEARNING_TRANSLATION_LANGUAGE` | `zh-CN` | 启用翻译时的目标语言 |
 | `CONTEXTLENS_LEARNING_RESPONSE_DETAIL` | `compact` | `compact`（默认短答）或 `normal` |
+| `CONTEXTLENS_LEARNING_OUTPUT_STYLE` | `focus` | `focus` 强制“核心结论优先”；`standard` 允许较完整讲解 |
+| `CONTEXTLENS_LEARNING_MAX_KEY_POINTS` | `3` | 解释要点上限，运行时收敛到 2～5 |
+| `CONTEXTLENS_LEARNING_CODE_EXAMPLES` | `on-demand` | `never`、`on-demand` 或 `always`，控制是否主动给最小示例 |
 | `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，只支持 5 / 10 / 20 |

@@ -4,6 +4,8 @@ ContextLens 是一款 Chrome 浏览器插件，让您在任意网页上划词选
 
 同时支持 **本地 CLI 编程代理**（Claude Code、Codex CLI、Antigravity CLI、Copilot CLI），通过 Bridge Server 将选中 UI 文本直接发送给本地代理，实现"选中 → 定位代码 → 自动修改"的开发闭环。
 
+本项目基于ContextLens修改,原项目https://github.com/cola-sk/context-lens
+
 ---
 
 ## 核心特性

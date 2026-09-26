@@ -45,8 +45,13 @@ const local = {
 };
 const learning = {
   translationEnabled: !/^(0|false|no)$/i.test(env.CONTEXTLENS_LEARNING_TRANSLATION_ENABLED || "true"),
-  targetLanguage: env.CONTEXTLENS_LEARNING_TARGET_LANGUAGE || "zh-CN",
+  // TARGET_LANGUAGE 保留为旧配置兼容项；新配置区分回答语言与翻译语言。
+  responseLanguage: env.CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE || env.CONTEXTLENS_LEARNING_TARGET_LANGUAGE || "zh-CN",
+  translationLanguage: env.CONTEXTLENS_LEARNING_TRANSLATION_LANGUAGE || env.CONTEXTLENS_LEARNING_TARGET_LANGUAGE || "zh-CN",
   responseDetail: env.CONTEXTLENS_LEARNING_RESPONSE_DETAIL || "compact",
+  outputStyle: env.CONTEXTLENS_LEARNING_OUTPUT_STYLE || "focus",
+  maxKeyPoints: Number(env.CONTEXTLENS_LEARNING_MAX_KEY_POINTS || 3),
+  codeExamples: env.CONTEXTLENS_LEARNING_CODE_EXAMPLES || "on-demand",
   sourceLanguage: env.CONTEXTLENS_LEARNING_SOURCE_LANGUAGE || "auto",
   contextMode: env.CONTEXTLENS_LEARNING_CONTEXT_MODE || "auto",
   manualLines: Number(env.CONTEXTLENS_LEARNING_MANUAL_LINES || 5)

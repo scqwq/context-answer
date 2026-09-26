@@ -30,8 +30,12 @@
       contextMode,
       manualLines,
       translationEnabled: raw.translationEnabled ?? defaults.translationEnabled ?? true,
-      targetLanguage: String(raw.targetLanguage || defaults.targetLanguage || "zh-CN"),
-      responseDetail: DETAIL_LEVELS.has(raw.responseDetail) ? raw.responseDetail : (DETAIL_LEVELS.has(defaults.responseDetail) ? defaults.responseDetail : "compact")
+      responseLanguage: String(raw.responseLanguage || defaults.responseLanguage || defaults.targetLanguage || "zh-CN"),
+      translationLanguage: String(raw.translationLanguage || defaults.translationLanguage || defaults.targetLanguage || "zh-CN"),
+      responseDetail: DETAIL_LEVELS.has(raw.responseDetail) ? raw.responseDetail : (DETAIL_LEVELS.has(defaults.responseDetail) ? defaults.responseDetail : "compact"),
+      outputStyle: raw.outputStyle === "standard" ? "standard" : (defaults.outputStyle === "standard" ? "standard" : "focus"),
+      maxKeyPoints: Math.min(5, Math.max(2, Number(raw.maxKeyPoints || defaults.maxKeyPoints) || 3)),
+      codeExamples: ["never", "on-demand", "always"].includes(raw.codeExamples) ? raw.codeExamples : (["never", "on-demand", "always"].includes(defaults.codeExamples) ? defaults.codeExamples : "on-demand")
     };
   }
 
