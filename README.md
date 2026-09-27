@@ -24,6 +24,7 @@ It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravit
 - **Tab-level isolation**: Each tab keeps its own chat history, selection context, and model state.
 - **Real-time streaming output**: All models support SSE streaming; local agents additionally show logs, reasoning, and tool calls.
 - **Interrupt while running**: Send button switches to a red stop button during request execution; click to cancel immediately (before first token or during streaming).
+- **LLM timing timeline**: Every API/Agent call records its own `t=0`, dispatch, HTTP response, first stream data, first displayable output, end state, and aggregate timing metrics for performance tuning.
 - **Model config modal improvements**: Switching provider automatically resets irrelevant fields; model sync success messages auto-dismiss.
 - **Bilingual UI**: One-click `Chinese / English` switching in the side panel, including static and major dynamic messages.
 - **Glassmorphism UI**: Frosted style with polished transitions, code highlighting, and breathing status indicators.
@@ -139,6 +140,8 @@ ContextLens/
   bridge/
     package.json           # Bridge Server config
     server.js              # Node bridge: agent detection, CLI dispatch, SSE forwarding
+  shared/
+    llm-timeline.js        # Privacy-safe per-call LLM timing timeline
   icons/                   # Extension icon set
   referrence/              # Product screenshots
 ```
@@ -188,6 +191,19 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 - `tool_use / tool_call / function_call / tool.execution_start` -> rendered as system logs (with params)
 - `tool_result / function_result / command_execution / tool.execution_complete` -> rendered as system logs (with output)
 - `error` -> rendered as error alerts
+
+### LLM 调用时间线与性能排查
+
+为便于优化自动上下文评估和流式回答的耗时，扩展会将每一次实际模型调用作为一条独立时间线保存。自动上下文的 0 / 5 / 10 / 20 行评估会分别记录，不会与最终回答混为一条。
+
+- 网页内学习面板：点击右上角“日志”。
+- 原生侧边栏：点击顶部波形图标。
+- 每条记录包含绝对开始时间 `startedAt` 与相对时间 `t+…ms`：请求创建、发出 HTTP 请求、收到 HTTP 响应、收到首个流式数据、解析到首段输出、完成/取消/超时/失败。
+- `firstResponseMs` 用于判断 HTTP 开始响应的速度，`firstStreamDataMs` 表示首个流数据，`firstOutputMs` 表示何时真的能向用户显示内容；总耗时、流数据块数和字节数可用于比较模型、网络或提示词策略。
+
+日志保存在扩展的 `chrome.storage.local` 键 `contextLensLlmTimelines`，最多保留最近 60 次调用，并不写入项目目录或本机文本文件。这种方式适合 Manifest V3 的 Service Worker 生命周期，也不会要求扩展获得本机文件写入权限。
+
+出于隐私考虑，时间线不会记录 API Key、请求 URL、请求头、选区、提示词、模型回答正文或思维链。“响应内容”仅以安全的事件类型和大小指标表示，例如 `HTTP 200`、`assessment-response`、`first-output`、输出字符数。
 
 ---
 

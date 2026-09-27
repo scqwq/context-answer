@@ -63,7 +63,7 @@
     return chrome.tabs.sendMessage(tabId, { type: "FALLBACK_STREAM_EVENT", requestId, ...payload }).catch(() => {});
   }
 
-  async function streamLines(response, onData) {
+  async function streamLines(response, onData, timeline) {
     const reader = response.body?.getReader();
     if (!reader) throw new Error("接口没有返回可读取的流式响应。");
     const decoder = new TextDecoder();
@@ -71,6 +71,7 @@
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      void timeline?.streamChunk(value?.byteLength || 0);
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -81,6 +82,13 @@
     }
   }
 
+  async function fetchWithTimeline(timeline, url, options) {
+    void timeline?.dispatch();
+    const response = await fetch(url, options);
+    void timeline?.response(response.status);
+    return response;
+  }
+
   // 将 HTTP 状态附在错误对象上，供诊断日志记录，不保留响应正文。
   async function throwResponseError(response, fallbackMessage) {
     const payload = await response.json().catch(() => ({}));
@@ -89,13 +97,13 @@
     throw error;
   }
 
-  async function streamOpenAiCompatible(model, prompt, signal, sendChunk) {
+  async function streamOpenAiCompatible(model, prompt, signal, sendChunk, timeline) {
     const baseUrl = model.provider === "openai" ? "https://api.openai.com/v1" : String(model.apiUrl || "").replace(/\/+$/, "");
     const url = String(model.apiEndpoint || "").trim() || (baseUrl ? `${baseUrl}/chat/completions` : "");
     if (!url || !model.model) throw new Error("请在 .env 或模型设置中填写 API 地址与模型名。");
     const headers = { "Content-Type": "application/json" };
     if (model.apiKey) headers.Authorization = `Bearer ${model.apiKey}`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeline(timeline, url, {
       method: "POST", signal, headers,
       body: JSON.stringify({ model: model.model, messages: [{ role: "user", content: prompt }], temperature: 0.3, stream: true })
     });
@@ -106,13 +114,13 @@
         const chunk = JSON.parse(data).choices?.[0]?.delta?.content;
         if (chunk) sendChunk(chunk);
       } catch {}
-    });
+    }, timeline);
   }
 
-  async function streamGemini(model, prompt, signal, sendChunk) {
+  async function streamGemini(model, prompt, signal, sendChunk, timeline) {
     if (!model.apiKey || !model.model) throw new Error("Gemini 需要 API Key 和模型名。");
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.model}:streamGenerateContent?alt=sse&key=${model.apiKey}`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeline(timeline, url, {
       method: "POST", signal, headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3 } })
     });
@@ -122,12 +130,12 @@
         const chunk = JSON.parse(data).candidates?.[0]?.content?.parts?.[0]?.text;
         if (chunk) sendChunk(chunk);
       } catch {}
-    });
+    }, timeline);
   }
 
-  async function streamClaude(model, prompt, signal, sendChunk) {
+  async function streamClaude(model, prompt, signal, sendChunk, timeline) {
     if (!model.apiKey || !model.model) throw new Error("Claude 需要 API Key 和模型名。");
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetchWithTimeline(timeline, "https://api.anthropic.com/v1/messages", {
       method: "POST", signal,
       headers: { "content-type": "application/json", "x-api-key": model.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
       body: JSON.stringify({ model: model.model, max_tokens: 4000, temperature: 0.3, stream: true, messages: [{ role: "user", content: prompt }] })
@@ -138,37 +146,54 @@
         const parsed = JSON.parse(data);
         if (parsed.type === "content_block_delta" && parsed.delta?.text) sendChunk(parsed.delta.text);
       } catch {}
-    });
+    }, timeline);
   }
 
   // 评估阶段使用非流式短请求；与最终答案的流式请求分离，便于稳定解析 JSON。
-  async function completeOpenAiCompatible(model, prompt, signal) {
+  async function completeOpenAiCompatible(model, prompt, signal, timeline) {
     const baseUrl = model.provider === "openai" ? "https://api.openai.com/v1" : String(model.apiUrl || "").replace(/\/+$/, "");
     const url = String(model.apiEndpoint || "").trim() || (baseUrl ? `${baseUrl}/chat/completions` : "");
     const headers = { "Content-Type": "application/json" };
     if (model.apiKey) headers.Authorization = `Bearer ${model.apiKey}`;
-    const response = await fetch(url, { method: "POST", signal, headers, body: JSON.stringify({ model: model.model, messages: [{ role: "user", content: prompt }], temperature: 0, stream: false }) });
+    const response = await fetchWithTimeline(timeline, url, { method: "POST", signal, headers, body: JSON.stringify({ model: model.model, messages: [{ role: "user", content: prompt }], temperature: 0, stream: false }) });
     if (!response.ok) await throwResponseError(response, `上下文评估失败（${response.status}）。`);
     return (await response.json()).choices?.[0]?.message?.content || "";
   }
 
-  async function completeGemini(model, prompt, signal) {
+  async function completeGemini(model, prompt, signal, timeline) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.model}:generateContent?key=${model.apiKey}`;
-    const response = await fetch(url, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } }) });
+    const response = await fetchWithTimeline(timeline, url, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } }) });
     if (!response.ok) await throwResponseError(response, `Gemini 上下文评估失败（${response.status}）。`);
     return (await response.json()).candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
   }
 
-  async function completeClaude(model, prompt, signal) {
-    const response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", signal, headers: { "content-type": "application/json", "x-api-key": model.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: model.model, max_tokens: 300, temperature: 0, messages: [{ role: "user", content: prompt }] }) });
+  async function completeClaude(model, prompt, signal, timeline) {
+    const response = await fetchWithTimeline(timeline, "https://api.anthropic.com/v1/messages", { method: "POST", signal, headers: { "content-type": "application/json", "x-api-key": model.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: model.model, max_tokens: 300, temperature: 0, messages: [{ role: "user", content: prompt }] }) });
     if (!response.ok) await throwResponseError(response, `Claude 上下文评估失败（${response.status}）。`);
     return (await response.json()).content?.map((part) => part.text || "").join("") || "";
   }
 
-  async function assess(model, prompt, signal) {
-    if (model.provider === "gemini") return completeGemini(model, prompt, signal);
-    if (model.provider === "claude") return completeClaude(model, prompt, signal);
-    return completeOpenAiCompatible(model, prompt, signal);
+  async function assess(model, prompt, signal, metadata = {}) {
+    const timeline = global.ContextLensLlmTimeline.start({
+      surface: metadata.surface || "in-page-panel",
+      purpose: "context-assessment",
+      provider: model.provider,
+      model: model.model,
+      transport: metadata.transport || (model.apiEndpoint ? "direct-endpoint" : "api")
+    });
+    try {
+      let text;
+      if (model.provider === "gemini") text = await completeGemini(model, prompt, signal, timeline);
+      else if (model.provider === "claude") text = await completeClaude(model, prompt, signal, timeline);
+      else text = await completeOpenAiCompatible(model, prompt, signal, timeline);
+      void timeline.assessmentReceived(text.length);
+      void timeline.finish("completed");
+      return text;
+    } catch (error) {
+      const outcome = /超时|timeout/i.test(error.message || "") ? "timed-out" : (signal?.aborted ? "cancelled" : "failed");
+      void timeline.finish(outcome, error.message);
+      throw error;
+    }
   }
 
   async function start({ tabId, requestId, payload, instruction, requestOptions }) {
@@ -184,7 +209,11 @@
       controller.abort(new Error("学习请求总超时"));
     }, options.requestTimeoutMs);
     requests.set(requestId, requestState);
-    const sendChunk = (text) => event(tabId, requestId, { event: "chunk", text });
+    let answerTimeline = null;
+    const sendChunk = (text) => {
+      void answerTimeline?.outputChunk(text.length);
+      return event(tabId, requestId, { event: "chunk", text });
+    };
     const transport = model.apiEndpoint ? "direct-endpoint" : "openai-compatible-base-url";
     try {
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "context-preparation-started", provider: model.provider, transport });
@@ -196,7 +225,7 @@
           await event(tabId, requestId, { event: "status", text: radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…` });
           const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), radius });
           return withAssessmentTimeout(
-            (assessmentSignal) => assess(model, assessmentPrompt, assessmentSignal),
+            (assessmentSignal) => assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport }),
             controller.signal,
             options.assessmentTimeoutMs
           );
@@ -220,9 +249,11 @@
         options: { ...options, sourceLanguageLabel: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), contextModeLabel: options.contextMode === "manual" ? `手动上下各 ${options.manualLines} 行` : "自动选择" }
       });
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "started", provider: model.provider, transport });
-      if (model.provider === "gemini") await streamGemini(model, prompt, controller.signal, sendChunk);
-      else if (model.provider === "claude") await streamClaude(model, prompt, controller.signal, sendChunk);
-      else await streamOpenAiCompatible(model, prompt, controller.signal, sendChunk);
+      answerTimeline = global.ContextLensLlmTimeline.start({ surface: "in-page-panel", purpose: "learning-answer", provider: model.provider, model: model.model, transport });
+      if (model.provider === "gemini") await streamGemini(model, prompt, controller.signal, sendChunk, answerTimeline);
+      else if (model.provider === "claude") await streamClaude(model, prompt, controller.signal, sendChunk, answerTimeline);
+      else await streamOpenAiCompatible(model, prompt, controller.signal, sendChunk, answerTimeline);
+      void answerTimeline.finish("completed");
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport });
       await event(tabId, requestId, { event: "done" });
     } catch (error) {
@@ -230,6 +261,7 @@
         ? `学习请求超过 ${Math.round(options.requestTimeoutMs / 1000)} 秒，请重试。`
         : (error.message || "请求失败。");
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: requestState.cancelled ? "cancelled" : "failed", provider: model.provider, transport, status: error.status || null, error: message });
+      if (answerTimeline) void answerTimeline.finish(requestState.cancelled ? "cancelled" : (requestState.timedOut ? "timed-out" : "failed"), message);
       if (!requestState.cancelled) await event(tabId, requestId, { event: "error", error: message });
     } finally {
       clearTimeout(requestState.timeoutId);

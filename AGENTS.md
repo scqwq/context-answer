@@ -29,6 +29,7 @@
 | `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
 | `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式按 0、5、10、20 行评估；20 行仍不足时要求用户补充 |
 | `shared/request-diagnostics.js` | LLM 调用的脱敏诊断记录 | 仅保存阶段、供应商、传输方式、HTTP 状态和错误摘要，严禁记录密钥、URL、选区或回答 |
+| `shared/llm-timeline.js` | LLM 调用时间线与耗时指标 | 以单次模型调用为单位记录 `t=0`、HTTP 响应、首个流数据、首段输出和结束状态；严禁记录模型原文 |
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
 | `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口 |
 | `fallback/` | 无原生侧栏时的 Shadow DOM 右侧学习面板 | 不读取网页样式；只通过消息与后台通信 |
@@ -64,6 +65,7 @@
 - 网页内面板请求期间禁用“一键学习解释”和“发送问题”，并启用“停止”。停止会发送 `CANCEL_FALLBACK_REQUEST`，后台必须中止对应 `AbortController`，不得仅隐藏旧结果。
 - 原生侧边栏的充分性评估也属于活动请求：`contextWorkflowId` 与 `CANCEL_CONTEXT_ASSESSMENT` 负责取消后台评估。新增异步流程时必须复用或更新 `tabRequestStates`，避免重复点击产生并行请求。
 - 总超时覆盖“评估 + 上下文扩展 + 最终流式回答”；单次评估有独立超时。超时应反馈给用户并写入脱敏日志。
+- 每一个实际 LLM 调用必须单独写入时间线：至少记录模型供应商/模型名、调用用途、`t=0` 创建、HTTP 发出、HTTP 响应、首个流数据、首段可展示输出、完成/取消/超时/失败及对应耗时。不要用单一总请求掩盖多次自动评估。
 
 ## 配置参数
 
@@ -109,10 +111,20 @@ npm run bridge  # 只有本地 Agent 模式需要
 
 自动上下文会额外产生短的“充分性评估”模型请求。评估请求不展示给用户；模型只返回 JSON 决策。最终回答才使用流式请求。若 20 行仍不足，界面必须明确告诉用户缺少什么，不能继续自动扩大到全文。
 
+### LLM 调用时间线
+
+性能日志由 `shared/llm-timeline.js` 单独维护，实际保存于 `chrome.storage.local` 的 `contextLensLlmTimelines`，而不是仓库中的 `.md`/`.txt` 文件：浏览器扩展无法可靠、安全地直接写本机文件，存储 API 可在 Service Worker 重启后保留数据。最多保留最近 60 次模型调用，每次最多 24 个阶段事件。
+
+- 网页内回退面板右上角“日志”可查看最近 15 次完整时间线和原有脱敏诊断。
+- 原生侧边栏顶部的波形图标可将最近 15 次时间线显示在会话区域。
+- `startedAt` 是绝对时间；每个事件的 `tMs` 从该次模型调用创建时开始计时。重点观察 `firstResponseMs`（HTTP 响应）、`firstStreamDataMs`（首个网络流数据）与 `firstOutputMs`（首段可展示文本），可区分服务端排队、网络和流式解析延迟。
+- 记录“LLM 响应了什么”时仅保留响应类型（HTTP 状态、评估结果已收到、首段输出已解析）、片段数和字节/字符数；绝不保存选区、提示词、模型回答、思维链、密钥、请求头或完整 URL。
+
 ## 重要边界与安全要求
 
 - 普通“学习解释”模式不需要启动 Bridge，也不应拥有写本机文件的能力。
 - 不要把 API Key、用户选区全文或聊天历史写入日志、README 或任何会提交的文件。
+- LLM 时间线的模型名可记录，但任何响应正文只能显示在当前用户会话内，不能写入 `chrome.storage.local` 的日志键。
 - `host_permissions` 当前为 `<all_urls>`；新增采集能力时须避免采集密码框、支付页或无关隐私内容。
 - `bridge/server.js` 目前是本机服务；如准备公开发布或允许任意网页调用，必须收紧 CORS、验证扩展来源，并要求用户确认工作目录与执行动作。
 - Chromium 的 `sidePanel` 是当前 UI 基础。Firefox/Safari 支持应新增适配层，不要把浏览器判断散落进 DOM 提取或提示词模块。

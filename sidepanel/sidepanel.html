@@ -27,6 +27,11 @@
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
         </button>
+        <button id="llm-timeline-btn" class="header-btn" title="查看 LLM 调用时间线" aria-label="查看 LLM 调用时间线">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 12 7 12 10 5 14 19 17 12 21 12"></polyline>
+          </svg>
+        </button>
         <button id="settings-toggle" class="header-btn" title="AI 服务设置" data-i18n-title="header.settings_title">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -459,6 +464,7 @@
   <script src="../shared/context-assessment.js"></script>
   <script src="../shared/context-orchestrator.js"></script>
   <script src="../shared/request-diagnostics.js"></script>
+  <script src="../shared/llm-timeline.js"></script>
   <script src="learning/prompt-builder.js"></script>
   <script src="learning/mode-ui.js"></script>
   <script src="learning/options-ui.js"></script>

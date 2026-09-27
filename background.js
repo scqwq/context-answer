@@ -1,7 +1,7 @@
 // Background Service Worker for ContextLens
 // 先加载独立能力路由与网页内面板的流式客户端；本地 .env 生成文件缺失时安全回退。
 try { importScripts("sidepanel/config.local.js"); } catch (error) { console.warn("[ContextLens] 未生成本地环境配置：", error.message); }
-importScripts("sidepanel/config.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/context-assessment.js", "shared/context-orchestrator.js", "shared/request-diagnostics.js", "background/panel-capabilities.js", "background/fallback-chat.js");
+importScripts("sidepanel/config.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/context-assessment.js", "shared/context-orchestrator.js", "shared/request-diagnostics.js", "shared/llm-timeline.js", "background/panel-capabilities.js", "background/fallback-chat.js");
 
 // Track which tabs have side panel active
 let activeSidePanelTabs = new Set();
@@ -430,6 +430,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "GET_LLM_TIMELINES") {
+    ContextLensLlmTimeline.list(message.limit || 15)
+      .then((runs) => sendResponse({ success: true, runs }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === "GET_LEARNING_OPTIONS") {
     ContextLensLearningOptions.get()
       .then((options) => sendResponse({ success: true, options }))
@@ -457,7 +464,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (requestId) nativeAssessmentRequests.set(requestId, controller);
     const timer = setTimeout(() => controller.abort(new Error("上下文评估超时")), timeoutMs);
     ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-started", provider: model.provider, transport })
-      .then(() => ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal))
+      .then(() => ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, { surface: "native-side-panel", transport }))
       .then(async (text) => {
         await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-completed", provider: model.provider, transport });
         sendResponse({ success: true, text });

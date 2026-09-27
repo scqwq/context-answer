@@ -2200,6 +2200,24 @@ function loadProviderCacheToForm(provider) {
 function setupEventListeners() {
   setupAutoScrollPauseOnUserScroll();
 
+  const llmTimelineButton = document.getElementById("llm-timeline-btn");
+  if (llmTimelineButton) {
+    llmTimelineButton.addEventListener("click", async () => {
+      const response = await chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 15 }).catch(() => null);
+      if (!response?.success) {
+        appendMessage("assistant", `无法读取 LLM 调用时间线：${response?.error || "未知错误"}`);
+        return;
+      }
+      const text = (response.runs || []).map((run) => {
+        const metrics = run.metrics || {};
+        const total = Number.isFinite(metrics.totalMs) ? `${metrics.totalMs}ms` : "进行中";
+        const events = (run.events || []).map((event) => `- t+${event.tMs}ms ${event.type}${event.status ? `（HTTP ${event.status}）` : ""}${event.error ? `：${event.error}` : ""}`).join("\n");
+        return `### ${run.purpose} · ${run.outcome}\n模型：${run.provider} / ${run.model}\n总耗时：${total}；HTTP 响应：${metrics.firstResponseMs ?? "—"}ms；首个流数据：${metrics.firstStreamDataMs ?? "—"}ms；首段输出：${metrics.firstOutputMs ?? "—"}ms\n流数据：${metrics.responseChunks || 0} 块 / ${metrics.responseBytes || 0} B\n${events}`;
+      }).join("\n\n");
+      appendMessage("assistant", `## LLM 调用时间线（最近 15 次）\n\n${text || "暂无调用记录。"}`);
+    });
+  }
+
   // Delegated copy event listener for messagesList
   if (messagesList) {
     messagesList.addEventListener("click", (e) => {
@@ -5164,6 +5182,28 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       : [];
     let response;
     let reader;
+    // 时间线只记录调用阶段和字节数；模型原文仍只保留在用户可见的会话中。
+    let llmTimeline = null;
+    const startLlmTimeline = () => {
+      if (llmTimeline) return llmTimeline;
+      llmTimeline = window.ContextLensLlmTimeline?.start?.({
+        surface: "native-side-panel",
+        purpose: apiProvider.endsWith("-agent") ? "local-agent-answer" : "chat-answer",
+        provider: apiProvider,
+        model: modelName,
+        transport: apiProvider.endsWith("-agent") ? "local-agent-bridge" : "api"
+      }) || null;
+      return llmTimeline;
+    };
+    const fetchLlmResponse = async (url, options) => {
+      const timeline = startLlmTimeline();
+      void timeline?.dispatch();
+      const result = await fetch(url, options);
+      void timeline?.response(result.status);
+      return result;
+    };
+    const noteLlmStreamChunk = (value) => void llmTimeline?.streamChunk(value?.byteLength || 0);
+    const noteLlmOutput = (text) => void llmTimeline?.outputChunk(String(text || "").length);
 
     // --- GEMINI API STREAM ---
     if (apiProvider === "gemini") {
@@ -5229,7 +5269,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
         });
       }
 
-      response = await fetch(url, {
+      response = await fetchLlmResponse(url, {
         method: "POST",
         signal: abortController.signal,
         headers: { "Content-Type": "application/json" },
@@ -5259,6 +5299,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        noteLlmStreamChunk(value);
 
         buffer += decoder.decode(value, { stream: true });
         
@@ -5299,6 +5340,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
                   const parsed = JSON.parse(jsonStr);
                   const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
                   if (textChunk) {
+                    noteLlmOutput(textChunk);
                     streamedText += textChunk;
                     assistantMsgObj.content = streamedText;
                     scheduleStreamStatePersist();
@@ -5408,7 +5450,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
         }
       }
 
-      response = await fetch(url, {
+      response = await fetchLlmResponse(url, {
         method: "POST",
         signal: abortController.signal,
         headers: headers,
@@ -5435,6 +5477,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        noteLlmStreamChunk(value);
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -5453,6 +5496,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
             const contentChunk = parsed.choices?.[0]?.delta?.content;
             const reasoningChunk = parsed.choices?.[0]?.delta?.reasoning_content;
             if (contentChunk || reasoningChunk) {
+              noteLlmOutput(contentChunk || reasoningChunk);
               if (reasoningChunk) {
                 if (!assistantMsgObj._hasThinkTag) {
                   streamedText += "<think>";
@@ -5533,7 +5577,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
         });
       }
 
-      response = await fetch(url, {
+      response = await fetchLlmResponse(url, {
         method: "POST",
         signal: abortController.signal,
         headers: {
@@ -5568,6 +5612,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        noteLlmStreamChunk(value);
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -5582,6 +5627,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
             try {
               const parsed = JSON.parse(rawData);
               if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+                noteLlmOutput(parsed.delta.text);
                 streamedText += parsed.delta.text;
                 assistantMsgObj.content = streamedText;
                 scheduleStreamStatePersist();
@@ -5623,7 +5669,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
         promptToSend = historyPrompt;
       }
 
-      response = await fetch(url, {
+      response = await fetchLlmResponse(url, {
         method: "POST",
         signal: abortController.signal,
         headers: { "Content-Type": "application/json" },
@@ -5668,6 +5714,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        noteLlmStreamChunk(value);
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -5700,6 +5747,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
               const parsed = JSON.parse(rawData);
               
               if (parsed.type === "text" && parsed.text) {
+                noteLlmOutput(parsed.text);
                 streamedText += parsed.text;
                 assistantMsgObj.content = streamedText;
                 scheduleStreamStatePersist();
@@ -5766,6 +5814,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
     }
 
     void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "completed", provider: appSettings.apiProvider, transport: appSettings.apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api" });
+    void llmTimeline?.finish("completed");
     commitStreamStatePersist();
     saveChatHistory(targetTabId);
 
@@ -5773,6 +5822,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
     const wasUserAbort = requestState.userAbortRequested || (isAbortError(err) && !requestState.timedOut);
     if (wasUserAbort) {
       void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "cancelled", provider: appSettings.apiProvider, transport: "streaming-api" });
+      void llmTimeline?.finish("cancelled");
       requestState.activeReader = null;
       assistantMsgObj.isAgentComplete = true;
       if (!assistantMsgObj.content || !assistantMsgObj.content.trim()) {
@@ -5795,6 +5845,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
 
     console.error("ContextLens AI stream failed:", err);
     void window.ContextLensRequestDiagnostics?.record?.({ surface: "native-side-panel", phase: "failed", provider: appSettings.apiProvider, transport: appSettings.apiProvider.endsWith("-agent") ? "local-agent-bridge" : "streaming-api", error: err.message });
+    void llmTimeline?.finish(requestState.timedOut ? "timed-out" : "failed", err.message);
     const timeoutMessage = requestState.timedOut ? `学习请求超过 ${Math.round(nativeTimeoutMs / 1000)} 秒，请重试。` : "";
     const errMsg = t("chat.request_failed", {
       error: timeoutMessage || err.message || t("chat.network_error")

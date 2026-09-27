@@ -25,7 +25,7 @@
     shadow.appendChild(stylesheet);
     const panel = document.createElement("section");
     panel.className = "panel";
-    panel.innerHTML = `<header class="header"><span class="title">ContextLens · 学习解释</span><span><button class="diagnostics" title="查看脱敏诊断日志">诊断</button><button class="close" title="关闭">×</button></span></header><main class="body"><pre class="context"></pre><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><p class="option-hint">自动模式会先由模型判断，必要时按 5、10、20 行扩展。</p><textarea placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></main>`;
+    panel.innerHTML = `<header class="header"><span class="title">ContextLens · 学习解释</span><span><button class="diagnostics" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="close" title="关闭">×</button></span></header><main class="body"><pre class="context"></pre><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><p class="option-hint">自动模式会先由模型判断，必要时按 5、10、20 行扩展。</p><textarea placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></main>`;
     shadow.appendChild(panel);
     document.documentElement.appendChild(host);
     elements = {
@@ -144,19 +144,32 @@
   }
 
   async function showDiagnostics() {
-    const response = await chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS" });
-    if (!response?.success) {
-      elements.status.textContent = response?.error || "无法读取诊断日志。";
+    const [timelineResponse, diagnosticResponse] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 15 }),
+      chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS" })
+    ]);
+    if (!timelineResponse?.success || !diagnosticResponse?.success) {
+      elements.status.textContent = timelineResponse?.error || diagnosticResponse?.error || "无法读取调用日志。";
       elements.status.className = "status error";
       return;
     }
-    const text = (response.entries || []).map((entry) => {
+    const timelineText = (timelineResponse.runs || []).map((run) => {
+      const total = Number.isFinite(run.metrics?.totalMs) ? `${run.metrics.totalMs}ms` : "进行中";
+      const model = run.model || "未命名模型";
+      const eventText = (run.events || []).map((event) => {
+        const status = event.status ? ` HTTP ${event.status}` : "";
+        return `  t+${event.tMs}ms ${event.type}${status}${event.error ? `：${event.error}` : ""}`;
+      }).join("\n");
+      const metrics = run.metrics || {};
+      return `${run.startedAt} · ${run.surface} · ${run.purpose}\n模型：${run.provider} / ${model} · ${run.outcome} · 总耗时：${total}\nHTTP 响应：${metrics.firstResponseMs ?? "—"}ms · 首个流数据：${metrics.firstStreamDataMs ?? "—"}ms · 首段输出：${metrics.firstOutputMs ?? "—"}ms\n流数据：${metrics.responseChunks || 0} 块 / ${metrics.responseBytes || 0} B\n${eventText}`;
+    }).join("\n\n");
+    const diagnosticText = (diagnosticResponse.entries || []).map((entry) => {
       const status = entry.status ? ` HTTP ${entry.status}` : "";
       const error = entry.error ? `\n  错误：${entry.error}` : "";
       return `${entry.timestamp} · ${entry.surface} · ${entry.phase} · ${entry.provider} · ${entry.transport}${status}${error}`;
     }).join("\n\n");
-    elements.answer.textContent = text || "暂无 LLM 请求诊断记录。";
-    elements.status.textContent = "显示最近 15 条脱敏诊断记录";
+    elements.answer.textContent = `LLM 调用时间线（最近 15 次）\n\n${timelineText || "暂无 LLM 调用记录。"}\n\n———— 脱敏诊断 ————\n\n${diagnosticText || "暂无诊断记录。"}`;
+    elements.status.textContent = "显示最近 15 次 LLM 调用时间线";
     elements.status.className = "status";
   }
 
