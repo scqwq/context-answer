@@ -911,7 +911,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   } else if (message.type === "GET_CONTEXT_WINDOW") {
     try {
-      const contextData = buildExpandedContext(Number(message.radius || 5));
+      // 0 是手动模式的合法值，代表仅选区；不能用 || 回退成 5。
+      const requestedRadius = Number(message.radius);
+      const contextData = buildExpandedContext(Number.isFinite(requestedRadius) ? requestedRadius : 5);
       sendResponse(contextData
         ? { success: true, contextData }
         : { success: false, error: "原选区已失效，请重新选择内容。" });

@@ -57,7 +57,7 @@
 
 - 原生侧边栏在“回答模式”下依次显示：语言提示、上下文模式、手动行数。网页内回退面板在选区预览下显示同一组控件。语言与上下文选择会保存到 `chrome.storage.local`。
 - 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
-- 上下文模式：`auto` 先将最小选区交给 LLM 充分性评估；模型返回 JSON 后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 直接取用户选定的上下各 5/10/20 行。
+- 上下文模式：`auto` 先将最小选区交给 LLM 充分性评估；模型返回 JSON 后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估。
 - 自动模式最多评估四次（0、5、10、20）；模型 JSON 不可解析时立即回退为当前选区回答，禁止循环重试；20 行仍不足时提示用户粘贴模型指定的定义、调用处或章节内容。
 - 评估请求使用非流式短响应，最终学习回答才使用流式响应；两类阶段均写入脱敏诊断日志。
 - `content.js` 的 `GET_CONTEXT_WINDOW` 是上下文扩展入口。代码按源码行取窗口；普通网页按可见文本逻辑行取窗口。不要把该接口改成默认全文采集。
@@ -90,7 +90,7 @@
 | `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | `15000` | 每次上下文充分性评估的超时，范围同上 |
 | `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
-| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，只支持 5 / 10 / 20 |
+| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，支持 0（仅选区）/ 5 / 10 / 20 |
 | `CONTEXTLENS_LOCAL_API_URL` / `CONTEXTLENS_LOCAL_MODEL` | `http://localhost:11434/v1` / `qwen2.5-coder:7b` | 仅本地开关开启后生效的本地模型配置 |
 | `CONTEXTLENS_BRIDGE_URL` | `http://localhost:3100` | 可选本地 Agent Bridge 地址 |
 

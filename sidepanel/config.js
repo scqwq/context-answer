@@ -34,7 +34,7 @@
         assessmentTimeoutMs: Math.min(300000, Math.max(5000, Number(raw.learning?.assessmentTimeoutMs) || 15000)),
         sourceLanguage: String(raw.learning?.sourceLanguage || "auto"),
         contextMode: raw.learning?.contextMode === "manual" ? "manual" : "auto",
-        manualLines: [5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5
+        manualLines: [0, 5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5
       },
       bridgeUrl: String(raw.bridgeUrl || source.bridgeUrl || "")
     };

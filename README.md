@@ -205,6 +205,10 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 
 出于隐私考虑，时间线不会记录 API Key、请求 URL、请求头、选区、提示词、模型回答正文或思维链。“响应内容”仅以安全的事件类型和大小指标表示，例如 `HTTP 200`、`assessment-response`、`first-output`、输出字符数。
 
+### 学习模式的手动上下文
+
+在“手动选择”模式下，可选上下各 `0 / 5 / 10 / 20` 行。`0 行（仅选区）` 不会发起上下文充分性评估，也不会额外读取网页前后内容，适合已经完整的单行代码、短定义或希望控制发送内容的场景。
+
 ---
 
 ## Security and Privacy

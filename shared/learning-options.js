@@ -22,9 +22,9 @@
       : (LANGUAGES.some(([value]) => value === defaults.sourceLanguage) ? defaults.sourceLanguage : "auto");
     const contextMode = CONTEXT_MODES.has(raw.contextMode) ? raw.contextMode
       : (CONTEXT_MODES.has(defaults.contextMode) ? defaults.contextMode : "auto");
-    const manualLines = [5, 10, 20].includes(Number(raw.manualLines))
+    const manualLines = [0, 5, 10, 20].includes(Number(raw.manualLines))
       ? Number(raw.manualLines)
-      : ([5, 10, 20].includes(Number(defaults.manualLines)) ? Number(defaults.manualLines) : 5);
+      : ([0, 5, 10, 20].includes(Number(defaults.manualLines)) ? Number(defaults.manualLines) : 5);
     return {
       sourceLanguage,
       contextMode,
