@@ -55,7 +55,7 @@
     });
   }
 
-  function start({ surface, purpose, provider = "unknown", model = "未命名模型", transport = "unknown" }) {
+  function start({ surface, purpose, provider = "unknown", model = "未命名模型", transport = "unknown", chainId = "", chainLabel = "" }) {
     const id = createId();
     const startedMs = Date.now();
     const run = {
@@ -67,6 +67,8 @@
       provider,
       model: String(model || "未命名模型").slice(0, 160),
       transport,
+      chainId: String(chainId || id).slice(0, 160),
+      chainLabel: String(chainLabel || "单次模型调用").slice(0, 80),
       outcome: "running",
       events: [],
       metrics: { responseChunks: 0, responseBytes: 0, outputChunks: 0, outputChars: 0 }

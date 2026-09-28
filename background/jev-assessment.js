@@ -74,14 +74,16 @@
     };
   }
 
-  async function assess({ context, question, languageHint, radius, config, signal, surface }) {
+  async function assess({ context, question, languageHint, radius, config, signal, surface, chainId, chainLabel }) {
     if (!isConfigured(config)) return { status: "unavailable", reason: "Jev 未启用或配置不完整。" };
     const timeline = global.ContextLensLlmTimeline.start({
       surface: surface || "in-page-panel",
       purpose: "context-assessment-jev",
       provider: "typesafe",
       model: config.model,
-      transport: "typesafe-systemone"
+      transport: "typesafe-systemone",
+      chainId,
+      chainLabel
     });
     try {
       void timeline.dispatch();

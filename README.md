@@ -24,6 +24,7 @@ It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravit
 - **Tab-level isolation**: Each tab keeps its own chat history, selection context, and model state.
 - **Real-time streaming output**: All models support SSE streaming; local agents additionally show logs, reasoning, and tool calls.
 - **Interrupt while running**: Send button switches to a red stop button during request execution; click to cancel immediately (before first token or during streaming).
+- **Learning answer history**: The in-page learning panel keeps the latest completed answers after it is closed; use **Home** to return from logs and **View history** to reopen a previous answer.
 - **LLM timing timeline**: Every API/Agent call records its own `t=0`, dispatch, HTTP response, first stream data, first displayable output, end state, and aggregate timing metrics for performance tuning.
 - **Fast Jev context gate**: Optional TypeSafe Jev decision route checks whether the selected context is sufficient before the generative model runs; the existing LLM JSON check remains a fallback.
 - **Model config modal improvements**: Switching provider automatically resets irrelevant fields; model sync success messages auto-dismiss.
@@ -195,10 +196,10 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 
 ### LLM 调用时间线与性能排查
 
-为便于优化自动上下文评估和流式回答的耗时，扩展会将每一次实际模型调用作为一条独立时间线保存。自动上下文的 0 / 5 / 10 / 20 行评估会分别记录，不会与最终回答混为一条。
+为便于优化自动上下文评估和流式回答的耗时，扩展会将每一次实际模型调用作为一条独立时间线保存，并以一次用户提问为“请求链”归组。自动上下文的 Jev 判断、LLM 回退判断和最终回答会显示在同一个请求链边界内，而不是混在相邻问题之间。
 
-- 网页内学习面板：点击右上角“日志”。
-- 原生侧边栏：点击顶部波形图标。
+- 网页内学习面板：点击右上角“日志”，查看最近 15 条请求链。
+- 原生侧边栏：点击顶部波形图标，查看最近 15 条请求链。
 - 每条记录包含绝对开始时间 `startedAt` 与相对时间 `t+…ms`：请求创建、发出 HTTP 请求、收到 HTTP 响应、收到首个流式数据、解析到首段输出、完成/取消/超时/失败。
 - `firstResponseMs` 用于判断 HTTP 开始响应的速度，`firstStreamDataMs` 表示首个流数据，`firstOutputMs` 表示何时真的能向用户显示内容；总耗时、流数据块数和字节数可用于比较模型、网络或提示词策略。
 
@@ -206,9 +207,15 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 
 出于隐私考虑，时间线不会记录 API Key、请求 URL、请求头、选区、提示词、模型回答正文或思维链。“响应内容”仅以安全的事件类型和大小指标表示，例如 `HTTP 200`、`assessment-response`、`first-output`、输出字符数。
 
+### 学习回答历史与主页
+
+学习模式的最终回答默认使用 SSE 流式显示；自动上下文的充分性判断是非流式短请求，因此不需要新增 `.env` 流式开关。原生侧边栏沿用既有的会话历史；网页内学习面板新增右上角 **查看历史** 和 **主页**：前者读取已完成回答，后者从“日志”或历史详情返回当前回答。
+
+网页内历史保存于独立的 `chrome.storage.local` 键 `contextLensLearningAnswerHistory`，最多 30 条。为控制本地容量，单条问题最多保存 1,200 个字符、回答最多保存 16,000 个字符；不保存选区、页面 URL、API Key、请求头，也不会把回答写进性能日志。这里使用浏览器扩展自带存储，而不是 SQLite：无需本机数据库、原生消息服务或后端进程，且能在关闭面板后继续保留数据。
+
 ### 学习模式的手动上下文
 
-在“手动选择”模式下，可选上下各 `0 / 5 / 10 / 20` 行。`0 行（仅选区）` 不会发起上下文充分性评估，也不会额外读取网页前后内容，适合已经完整的单行代码、短定义或希望控制发送内容的场景。
+在“手动选择”模式下，可选上下各 `0 / 5 / 10 / 20` 行。`0 行（仅选区）` 不会发起上下文充分性评估，不调用 Jev 或 LLM 判断，也不会额外向网页读取前后内容；只把最小选区交给最终回答模型，适合已经完整的单行代码、短定义或希望控制发送内容的场景。
 
 ### Jev 优先的自动上下文判断
 

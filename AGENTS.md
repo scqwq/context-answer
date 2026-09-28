@@ -26,10 +26,12 @@
 | `sidepanel/learning/` | 学习模式的状态、UI、提示词和样式 | 新学习能力按职责拆文件，避免回填主文件 |
 | `shared/learning-prompt.js` | 侧边栏与网页内面板共用的学习提示词契约 | 不依赖 DOM 或单个浏览器 API |
 | `shared/learning-options.js` | 学习请求的语言、上下文和回答风格选项 | 面板设置优先，翻译等策略由 `.env` 提供默认值 |
+| `shared/learning-history.js` | 学习回答历史的限量持久化 | 保存学习模式已完成的问题与回答，供用户主动查看；不得混入诊断或时间线键 |
 | `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
 | `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式按 0、5、10、20 行评估；20 行仍不足时要求用户补充 |
 | `shared/request-diagnostics.js` | LLM 调用的脱敏诊断记录 | 仅保存阶段、供应商、传输方式、HTTP 状态和错误摘要，严禁记录密钥、URL、选区或回答 |
 | `shared/llm-timeline.js` | LLM 调用时间线与耗时指标 | 以单次模型调用为单位记录 `t=0`、HTTP 响应、首个流数据、首段输出和结束状态；严禁记录模型原文 |
+| `shared/llm-timeline-view.js` | 时间线请求链归组与格式化 | 按一次用户请求关联 Jev、LLM 评估和最终回答；不读取或显示提示词、选区或回答原文 |
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
 | `background/jev-assessment.js` | TypeSafe Jev 协议适配器 | 仅请求 `/v1/systemone` 的 `state + questions`；不得伪装成 OpenAI Chat API |
 | `background/context-assessment-router.js` | 自动上下文判断路线选择 | Jev 高置信度优先，低置信度/异常/未配置时回退 LLM；两者关闭则跳过判断 |
@@ -60,7 +62,7 @@
 
 - 原生侧边栏在“回答模式”下依次显示：语言提示、上下文模式、手动行数。网页内回退面板在选区预览下显示同一组控件。语言与上下文选择会保存到 `chrome.storage.local`。
 - 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
-- 上下文模式：`auto` 先将最小选区交给判断路由：已启用且配置完整的 Jev 为主路线，Jev 低置信度、异常或未配置时由 LLM JSON 判断回退；任一路线判定不足后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估。
+- 上下文模式：`auto` 先将最小选区交给判断路由：已启用且配置完整的 Jev 为主路线，Jev 低置信度、异常或未配置时由 LLM JSON 判断回退；任一路线判定不足后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估、不调用 Jev/LLM、不发送 `GET_CONTEXT_WINDOW`，只将最小选区交给最终回答模型。
 - Jev 使用 TypeSafe System One 的 `POST /v1/systemone`、`state + questions` 与结构化 `answers` 协议。`answerability` 和 `context_direction` 都是 `choice` 问题；只有 `sufficient` / `insufficient` 且置信度达到阈值时才作为自动决策，否则回退 LLM。
 - `CONTEXTLENS_JEV_ENABLED=false` 且 `CONTEXTLENS_LLM_ASSESSMENT_ENABLED=false` 时，自动判断和自动扩展均失效；界面必须明确提示“仅使用当前选区”，但最终解释模型仍照常调用。
 - 自动模式最多评估四次（0、5、10、20）；模型 JSON 不可解析时立即回退为当前选区回答，禁止循环重试；20 行仍不足时提示用户粘贴模型指定的定义、调用处或章节内容。
@@ -68,6 +70,7 @@
 - `content.js` 的 `GET_CONTEXT_WINDOW` 是上下文扩展入口。代码按源码行取窗口；普通网页按可见文本逻辑行取窗口。不要把该接口改成默认全文采集。
 - 网页内面板的回答必须通过 `fallback/answer-renderer.js` 安全渲染有限 Markdown；禁止用 `innerHTML` 渲染模型原始输出。
 - 网页内面板请求期间禁用“一键学习解释”和“发送问题”，并启用“停止”。停止会发送 `CANCEL_FALLBACK_REQUEST`，后台必须中止对应 `AbortController`，不得仅隐藏旧结果。
+- 最终学习回答使用 SSE 流式展示；上下文充分性判断仍是非流式短请求。网页内面板的“查看历史”最多保留 30 条已完成回答，“主页”只恢复本次仍在内存中的当前回答；关闭面板后可从历史中继续查看已完成回答。
 - 原生侧边栏的充分性评估也属于活动请求：`contextWorkflowId` 与 `CANCEL_CONTEXT_ASSESSMENT` 负责取消后台评估。新增异步流程时必须复用或更新 `tabRequestStates`，避免重复点击产生并行请求。
 - 总超时覆盖“评估 + 上下文扩展 + 最终流式回答”；单次评估有独立超时。超时应反馈给用户并写入脱敏日志。
 - 每一个实际 LLM 调用必须单独写入时间线：至少记录模型供应商/模型名、调用用途、`t=0` 创建、HTTP 发出、HTTP 响应、首个流数据、首段可展示输出、完成/取消/超时/失败及对应耗时。不要用单一总请求掩盖多次自动评估。
@@ -126,16 +129,20 @@ npm run bridge  # 只有本地 Agent 模式需要
 
 性能日志由 `shared/llm-timeline.js` 单独维护，实际保存于 `chrome.storage.local` 的 `contextLensLlmTimelines`，而不是仓库中的 `.md`/`.txt` 文件：浏览器扩展无法可靠、安全地直接写本机文件，存储 API 可在 Service Worker 重启后保留数据。最多保留最近 60 次模型调用，每次最多 24 个阶段事件。
 
-- 网页内回退面板右上角“日志”可查看最近 15 次完整时间线和原有脱敏诊断。
-- 原生侧边栏顶部的波形图标可将最近 15 次时间线显示在会话区域。
+- 每次用户学习请求会带一个内部请求链标识；Jev 判断、LLM 回退判断和最终回答均关联到该标识。旧日志没有标识，会被单独显示为“旧版未归组调用”。
+- 网页内回退面板右上角“日志”与原生侧边栏顶部波形图均显示最近 15 条请求链（从最近 60 次独立模型调用中归组）和原有脱敏诊断。
 - `startedAt` 是绝对时间；每个事件的 `tMs` 从该次模型调用创建时开始计时。重点观察 `firstResponseMs`（HTTP 响应）、`firstStreamDataMs`（首个网络流数据）与 `firstOutputMs`（首段可展示文本），可区分服务端排队、网络和流式解析延迟。
 - 记录“LLM 响应了什么”时仅保留响应类型（HTTP 状态、评估结果已收到、首段输出已解析）、片段数和字节/字符数；绝不保存选区、提示词、模型回答、思维链、密钥、请求头或完整 URL。
+
+### 学习回答历史
+
+`shared/learning-history.js` 使用独立的 `chrome.storage.local` 键 `contextLensLearningAnswerHistory` 保存网页内学习面板的已完成回答，最多 30 条；单条问题最多 1,200 字符、回答最多 16,000 字符。这里保存内容是“查看历史”这一用户可见功能的明确数据，不属于诊断或性能日志；不会保存选区、页面 URL、API Key、请求头或完整提示词。
 
 ## 重要边界与安全要求
 
 - 普通“学习解释”模式不需要启动 Bridge，也不应拥有写本机文件的能力。
 - 不要把 API Key、用户选区全文或聊天历史写入日志、README 或任何会提交的文件。
-- LLM 时间线的模型名可记录，但任何响应正文只能显示在当前用户会话内，不能写入 `chrome.storage.local` 的日志键。
+- LLM 时间线与脱敏诊断键永远不能保存响应正文；学习回答历史只能写入独立的 `contextLensLearningAnswerHistory` 键，并遵守条数与字符上限。
 - Jev API Key 与普通模型 Key 同样敏感。当前个人本机扩展可由 `.env` 构建进本地忽略文件；若发布给他人，必须改由受认证的服务端或 Bridge 代理请求，不能把 Key 随扩展分发。
 - `host_permissions` 当前为 `<all_urls>`；新增采集能力时须避免采集密码框、支付页或无关隐私内容。
 - `bridge/server.js` 目前是本机服务；如准备公开发布或允许任意网页调用，必须收紧 CORS、验证扩展来源，并要求用户确认工作目录与执行动作。

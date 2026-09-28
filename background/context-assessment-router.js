@@ -13,7 +13,7 @@
     });
   }
 
-  async function assess({ context, question, languageHint, radius, assessmentConfig, signal, surface, llmAssess }) {
+  async function assess({ context, question, languageHint, radius, assessmentConfig, signal, surface, chainId, chainLabel, llmAssess }) {
     const config = assessmentConfig || {};
     const jev = config.jev || {};
     const llmEnabled = config.llmEnabled !== false;
@@ -22,7 +22,7 @@
     if (jev.enabled && global.ContextLensJevAssessment.isConfigured(jev)) {
       try {
         await record("context-assessment-jev-started", { surface, provider: "typesafe", transport: "typesafe-systemone" });
-        const result = await global.ContextLensJevAssessment.assess({ context, question, languageHint, radius, config: jev, signal, surface });
+        const result = await global.ContextLensJevAssessment.assess({ context, question, languageHint, radius, config: jev, signal, surface, chainId, chainLabel });
         if (result.status === "decision") {
           await record("context-assessment-jev-completed", { surface, provider: "typesafe", transport: "typesafe-systemone" });
           return result.decision;

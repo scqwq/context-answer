@@ -473,8 +473,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         assessmentConfig,
         signal: controller.signal,
         surface: "native-side-panel",
+        chainId: requestId,
+        chainLabel: "原生学习解释",
         llmAssess: async () => {
-          const text = await ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, { surface: "native-side-panel", transport });
+          const text = await ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, { surface: "native-side-panel", transport, chainId: requestId, chainLabel: "原生学习解释" });
           return ContextLensContextAssessment.parse(text);
         }
       }))

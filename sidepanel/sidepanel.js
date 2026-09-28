@@ -121,13 +121,14 @@ const MAX_CLIPBOARD_IMAGE_BYTES = 8 * 1024 * 1024;
 const CHAT_INPUT_HISTORY_STORAGE_KEY = "chatInputHistories";
 const MAX_CHAT_INPUT_HISTORY_ITEMS = 10;
 let tabPendingClipboardImages = {}; // tabId -> [{ id, dataUrl, mimeType, size, name }]
-let tabRequestStates = {}; // tabId -> { activeReader, activeAbortController, contextWorkflowId, timeoutId, isRequestInProgress, userAbortRequested }
+let tabRequestStates = {}; // tabId -> { activeReader, activeAbortController, contextWorkflowId, learningTimelineChainId, timeoutId, isRequestInProgress, userAbortRequested }
 
 function createRequestState() {
   return {
     activeReader: null,
     activeAbortController: null,
     contextWorkflowId: "",
+    learningTimelineChainId: "",
     timeoutId: null,
     timedOut: false,
     deadlineAt: 0,
@@ -2203,18 +2204,13 @@ function setupEventListeners() {
   const llmTimelineButton = document.getElementById("llm-timeline-btn");
   if (llmTimelineButton) {
     llmTimelineButton.addEventListener("click", async () => {
-      const response = await chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 15 }).catch(() => null);
+      const response = await chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 60 }).catch(() => null);
       if (!response?.success) {
         appendMessage("assistant", `无法读取 LLM 调用时间线：${response?.error || "未知错误"}`);
         return;
       }
-      const text = (response.runs || []).map((run) => {
-        const metrics = run.metrics || {};
-        const total = Number.isFinite(metrics.totalMs) ? `${metrics.totalMs}ms` : "进行中";
-        const events = (run.events || []).map((event) => `- t+${event.tMs}ms ${event.type}${event.status ? `（HTTP ${event.status}）` : ""}${event.error ? `：${event.error}` : ""}`).join("\n");
-        return `### ${run.purpose} · ${run.outcome}\n模型：${run.provider} / ${run.model}\n总耗时：${total}；HTTP 响应：${metrics.firstResponseMs ?? "—"}ms；首个流数据：${metrics.firstStreamDataMs ?? "—"}ms；首段输出：${metrics.firstOutputMs ?? "—"}ms\n流数据：${metrics.responseChunks || 0} 块 / ${metrics.responseBytes || 0} B\n${events}`;
-      }).join("\n\n");
-      appendMessage("assistant", `## LLM 调用时间线（最近 15 次）\n\n${text || "暂无调用记录。"}`);
+      const text = window.ContextLensLlmTimelineView?.format?.(response.runs || [], { markdown: true, maxChains: 15 }) || "";
+      appendMessage("assistant", `## LLM 调用时间线（最近 15 条请求链）\n\n${text || "暂无调用记录。"}`);
     });
   }
 
@@ -3946,6 +3942,7 @@ async function handleSendMessage() {
     planningState.userAbortRequested = false;
     planningState.activeAbortController = planningController;
     planningState.contextWorkflowId = workflowId;
+    planningState.learningTimelineChainId = workflowId;
     planningState.deadlineAt = Date.now() + activeLearningOptions.requestTimeoutMs;
     planningState.timeoutId = setTimeout(() => {
       planningController.abort(new Error("学习请求总超时"));
@@ -3956,7 +3953,9 @@ async function handleSendMessage() {
       const jevReady = assessmentSettings.jev?.enabled && assessmentSettings.jev?.apiKey && assessmentSettings.jev?.apiUrl && assessmentSettings.jev?.model;
       learningNotice.hidden = false;
       learningNotice.textContent = activeLearningOptions.contextMode === "manual"
-        ? `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`
+        ? (activeLearningOptions.manualLines === 0
+          ? "手动模式：仅使用当前选区，不读取额外上下文。"
+          : `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`)
         : (jevReady ? "正在由 Jev 判断选区是否足够回答…" : (assessmentSettings.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…"));
     }
     try {
@@ -4001,7 +4000,10 @@ async function handleSendMessage() {
       }
       if (planningState.activeAbortController === planningController) planningState.activeAbortController = null;
       if (planningState.contextWorkflowId === workflowId) planningState.contextWorkflowId = "";
-      if (!continueLearningRequest) planningState.deadlineAt = 0;
+      if (!continueLearningRequest) {
+        planningState.deadlineAt = 0;
+        planningState.learningTimelineChainId = "";
+      }
       setRequestRunningState(false, messageTabId);
     }
   }
@@ -5077,6 +5079,8 @@ function showCopyFeedback(btn, isCodeBlock = false) {
 async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = "", outgoingImageAttachments = []) {
   const targetTabId = messageTabId || currentTabId;
   const requestState = getTabRequestState(targetTabId);
+  const timelineChainId = requestState.learningTimelineChainId || `native-chat-${targetTabId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const timelineChainLabel = requestState.learningTimelineChainId ? "原生学习解释" : "原生会话问答";
 
   // Replace only this tab's in-flight request (if any)
   if (requestState.activeReader) {
@@ -5113,6 +5117,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       requestState.timeoutId = null;
     }
     requestState.deadlineAt = 0;
+    if (requestState.learningTimelineChainId === timelineChainId) requestState.learningTimelineChainId = "";
     appendMessage("assistant", t("chat.config_incomplete"));
     return;
   }
@@ -5198,7 +5203,9 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
         purpose: apiProvider.endsWith("-agent") ? "local-agent-answer" : "chat-answer",
         provider: apiProvider,
         model: modelName,
-        transport: apiProvider.endsWith("-agent") ? "local-agent-bridge" : "api"
+        transport: apiProvider.endsWith("-agent") ? "local-agent-bridge" : "api",
+        chainId: timelineChainId,
+        chainLabel: timelineChainLabel
       }) || null;
       return llmTimeline;
     };
@@ -5899,6 +5906,7 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       requestState.timeoutId = null;
     }
     requestState.deadlineAt = 0;
+    if (requestState.learningTimelineChainId === timelineChainId) requestState.learningTimelineChainId = "";
     if (requestState.activeAbortController === abortController) {
       requestState.activeAbortController = null;
     }

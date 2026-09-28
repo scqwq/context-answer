@@ -19,6 +19,10 @@
   async function prepare({ context, question, options, assess, expand, onProgress = () => {} }) {
     if (!context?.selectedText) return { status: "ready", context };
     if (options.contextMode === "manual") {
+      if (Number(options.manualLines) === 0) {
+        onProgress("手动模式：仅使用当前选区，不读取额外上下文。");
+        return { status: "ready", context: minimalContext(context) };
+      }
       onProgress(`正在载入上下各 ${options.manualLines} 行上下文…`);
       return { status: "ready", context: await expand(options.manualLines, "both") || context };
     }

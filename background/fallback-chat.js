@@ -179,7 +179,9 @@
       purpose: "context-assessment",
       provider: model.provider,
       model: model.model,
-      transport: metadata.transport || (model.apiEndpoint ? "direct-endpoint" : "api")
+      transport: metadata.transport || (model.apiEndpoint ? "direct-endpoint" : "api"),
+      chainId: metadata.chainId,
+      chainLabel: metadata.chainLabel
     });
     try {
       let text;
@@ -239,8 +241,10 @@
               assessmentConfig,
               signal: assessmentSignal,
               surface: "in-page-panel",
+              chainId: requestId,
+              chainLabel: "网页内学习解释",
               llmAssess: async () => {
-                const text = await assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport });
+                const text = await assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport, chainId: requestId, chainLabel: "网页内学习解释" });
                 return global.ContextLensContextAssessment.parse(text);
               }
             }),
@@ -270,7 +274,7 @@
         options: { ...options, sourceLanguageLabel: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), contextModeLabel: options.contextMode === "manual" ? `手动上下各 ${options.manualLines} 行` : "自动选择" }
       });
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "started", provider: model.provider, transport });
-      answerTimeline = global.ContextLensLlmTimeline.start({ surface: "in-page-panel", purpose: "learning-answer", provider: model.provider, model: model.model, transport });
+      answerTimeline = global.ContextLensLlmTimeline.start({ surface: "in-page-panel", purpose: "learning-answer", provider: model.provider, model: model.model, transport, chainId: requestId, chainLabel: "网页内学习解释" });
       if (model.provider === "gemini") await streamGemini(model, prompt, controller.signal, sendChunk, answerTimeline);
       else if (model.provider === "claude") await streamClaude(model, prompt, controller.signal, sendChunk, answerTimeline);
       else await streamOpenAiCompatible(model, prompt, controller.signal, sendChunk, answerTimeline);
