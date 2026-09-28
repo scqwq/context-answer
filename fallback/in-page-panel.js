@@ -16,6 +16,7 @@
   let modelChoices = [];
   let activeAnswerText = "";
   let activeInstruction = "";
+  let activeLearningScopeKey = "";
   let viewMode = "home";
   let homeStatus = { text: "已准备就绪", className: "status" };
 
@@ -524,6 +525,7 @@
     elements.context.textContent = selected.slice(0, 1600);
     activeAnswerText = "";
     activeInstruction = "";
+    activeLearningScopeKey = "";
     pendingQuestion = "";
     elements.answer.dataset.rawAnswer = "";
     setHomeStatus("已载入选区");
@@ -543,6 +545,7 @@
     }
     activeRequestId = `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeInstruction = question || "请解释选中内容。";
+    activeLearningScopeKey = "";
     pendingQuestion = currentMode === "chat" ? activeInstruction : "";
     activeAnswerText = "";
     viewMode = "home";
@@ -635,23 +638,35 @@
     parent.appendChild(node);
   }
 
-  function showHistoryEntry(entry) {
+  function showHistoryConversation(conversation) {
     showWorkspaceView("history-detail");
     elements.answer.replaceChildren();
     const back = document.createElement("button");
     back.type = "button";
     back.className = "history-back";
-    back.textContent = "← 返回历史列表";
+    back.textContent = t("historyBack");
     back.addEventListener("click", showHistory);
     const title = document.createElement("h2");
     title.className = "history-heading";
-    title.textContent = entry.question || "一键学习解释";
-    const content = document.createElement("div");
-    content.className = "history-answer";
-    elements.answer.append(back, title, content);
-    if (global.ContextLensAnswerRenderer) global.ContextLensAnswerRenderer.render(content, entry.answer);
-    else content.textContent = entry.answer;
-    setVisibleStatus(`查看历史回答 · ${new Date(entry.createdAt).toLocaleString("zh-CN")}`);
+    title.textContent = conversation.legacy ? t("historyLegacy") : t("historyTitle");
+    elements.answer.append(back, title);
+    conversation.entries.forEach((entry, index) => {
+      const turn = document.createElement("section");
+      turn.className = "history-turn";
+      const meta = document.createElement("div");
+      meta.className = "history-turn-meta";
+      meta.textContent = `${index + 1}. ${new Date(entry.createdAt).toLocaleString(uiLanguage === "en" ? "en" : "zh-CN")}`;
+      const question = document.createElement("h3");
+      question.className = "history-turn-question";
+      question.textContent = entry.question || "一键学习解释";
+      const answer = document.createElement("div");
+      answer.className = "history-answer";
+      if (global.ContextLensAnswerRenderer) global.ContextLensAnswerRenderer.render(answer, entry.answer);
+      else answer.textContent = entry.answer;
+      turn.append(meta, question, answer);
+      elements.answer.appendChild(turn);
+    });
+    setVisibleStatus(t("historyTurns").replace("{count}", String(conversation.entries.length)));
   }
 
   async function showHistory() {
@@ -659,38 +674,39 @@
     elements.answer.replaceChildren();
     const title = document.createElement("h2");
     title.className = "history-heading";
-    title.textContent = "学习回答历史";
+    title.textContent = t("historyTitle");
     const list = document.createElement("div");
     list.className = "history-list";
     elements.answer.append(title, list);
     try {
-      const records = await global.ContextLensLearningHistory?.list?.(30) || [];
+      const conversations = await global.ContextLensLearningHistory?.listConversations?.(30) || [];
       if (viewMode !== "history") return;
-      if (!records.length) {
+      if (!conversations.length) {
         const empty = document.createElement("p");
         empty.className = "history-empty";
-        empty.textContent = "暂无已完成的学习回答。";
+        empty.textContent = t("historyEmpty");
         list.appendChild(empty);
       } else {
-        records.forEach((entry) => {
+        conversations.forEach((conversation) => {
+          const latest = conversation.entries[conversation.entries.length - 1];
           const button = document.createElement("button");
           button.type = "button";
           button.className = "history-entry";
-          appendTextNode(button, "history-entry-time", new Date(entry.createdAt).toLocaleString("zh-CN"));
-          appendTextNode(button, "history-entry-question", entry.question || "一键学习解释");
-          appendTextNode(button, "history-entry-preview", entry.answer.replace(/\s+/g, " ").slice(0, 150));
-          button.addEventListener("click", () => showHistoryEntry(entry));
+          appendTextNode(button, "history-entry-time", new Date(latest.createdAt).toLocaleString(uiLanguage === "en" ? "en" : "zh-CN"));
+          appendTextNode(button, "history-entry-question", conversation.legacy ? t("historyLegacy") : t("historyTurns").replace("{count}", String(conversation.entries.length)));
+          appendTextNode(button, "history-entry-preview", latest.question || "一键学习解释");
+          button.addEventListener("click", () => showHistoryConversation(conversation));
           list.appendChild(button);
         });
       }
-      setVisibleStatus("显示最近 30 条已完成的学习回答");
+      setVisibleStatus(t("historyTitle"));
     } catch (error) {
       if (viewMode !== "history") return;
       const empty = document.createElement("p");
       empty.className = "history-empty";
-      empty.textContent = "无法读取学习回答历史。";
+      empty.textContent = t("historyLoadFailed");
       list.appendChild(empty);
-      setVisibleStatus("无法读取学习回答历史。", "status error");
+      setVisibleStatus(t("historyLoadFailed"), "status error");
     }
   }
 
@@ -714,10 +730,12 @@
         pendingQuestion = "";
         if (viewMode === "home") renderChatConversation();
       } else {
+        activeLearningScopeKey = String(message.learningScopeKey || "");
         void global.ContextLensLearningHistory?.save?.({
           question: activeInstruction,
           answer: activeAnswerText,
-          surface: "in-page-panel"
+          surface: "in-page-panel",
+          scopeKey: activeLearningScopeKey
         });
       }
       activeRequestId = null;

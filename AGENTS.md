@@ -30,7 +30,7 @@
 | `shared/chat-prompt.js` | 普通聊天提示词 | 只使用本次网页内面板的最近会话，勿混入学习模式记忆 |
 | `shared/context-answer-models.js` | ContextAnswer 的模型清单与当前选择 | 合并 `.env` 只读预置项和网页保存项；Key 仅在 `chrome.storage.local`，不能写入日志或文档 |
 | `shared/panel-preferences.js` | 面板宿主策略与充分性评估开关 | 设置页值优先于 `.env` 默认值 |
-| `shared/learning-history.js` | 学习回答历史的限量持久化 | 保存学习模式已完成的问题与回答，供用户主动查看；不得混入诊断或时间线键 |
+| `shared/learning-history.js` | 学习回答历史的限量持久化 | 保存学习模式已完成的问题与回答，并按学习记忆哈希分组供用户查看；不得保存选区原文或混入诊断、时间线键 |
 | `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
 | `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式在 0、5、10 行判断；扩展到 20 行后直接进入最终回答 |
 | `shared/request-diagnostics.js` | LLM 调用的脱敏诊断记录 | 仅保存阶段、供应商、传输方式、HTTP 状态和错误摘要，严禁记录密钥、URL、选区或回答 |
@@ -155,7 +155,7 @@ npm run bridge  # 只有本地 Agent 模式需要
 
 ### 学习回答历史
 
-`shared/learning-history.js` 使用独立的 `chrome.storage.local` 键 `contextLensLearningAnswerHistory` 保存网页内学习面板的已完成回答，最多 30 条；单条问题最多 1,200 字符、回答最多 16,000 字符。这里保存内容是“查看历史”这一用户可见功能的明确数据，不属于诊断或性能日志；不会保存选区、页面 URL、API Key、请求头或完整提示词。
+`shared/learning-history.js` 使用独立的 `chrome.storage.local` 键 `contextLensLearningAnswerHistory` 保存网页内学习面板的已完成回答，最多 30 条；单条问题最多 1,200 字符、回答最多 16,000 字符。新记录只额外保存学习记忆的哈希键，用于将同一选区的问答展示为完整会话；旧记录无哈希键时必须独立展示。这里保存内容是“查看历史”这一用户可见功能的明确数据，不属于诊断或性能日志；不会保存选区、页面 URL、API Key、请求头或完整提示词。
 
 ## 重要边界与安全要求
 

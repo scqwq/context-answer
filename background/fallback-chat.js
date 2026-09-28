@@ -388,7 +388,7 @@
       await streamAnswer(model, prompt, controller.signal, sendChunk, answerTimeline);
       void answerTimeline.finish("completed");
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport });
-      await event(tabId, requestId, { event: "done" });
+      await event(tabId, requestId, { event: "done", learningScopeKey: memoryState.key });
       void saveLearningMemory({ key: memoryState.key, question: instruction, answer: collectedAnswer, model, transport, chainId: requestId });
     } catch (error) {
       const message = requestState.timedOut
