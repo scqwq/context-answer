@@ -31,5 +31,6 @@ pnpm-debug.log*
 *~
 .claude/
 
-导学-ContextLens.md
-面经-ContextLens.md
+# 本地项目导学与面经，由个人使用，不纳入仓库
+导学-*.md
+面经-*.md

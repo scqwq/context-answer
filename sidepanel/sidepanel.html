@@ -32,6 +32,11 @@
             <polyline points="3 12 7 12 10 5 14 19 17 12 21 12"></polyline>
           </svg>
         </button>
+        <button id="llm-export-btn" class="header-btn hidden" title="导出全部日志" aria-label="导出全部日志">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>
+          </svg>
+        </button>
         <button id="settings-toggle" class="header-btn" title="AI 服务设置" data-i18n-title="header.settings_title">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -467,6 +472,7 @@
   <script src="../shared/request-diagnostics.js"></script>
   <script src="../shared/llm-timeline.js"></script>
   <script src="../shared/llm-timeline-view.js"></script>
+  <script src="../shared/log-export.js"></script>
   <script src="learning/prompt-builder.js"></script>
   <script src="learning/mode-ui.js"></script>
   <script src="learning/options-ui.js"></script>

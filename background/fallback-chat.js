@@ -9,6 +9,9 @@
   function withAssessmentTimeout(operation, parentSignal, timeoutMs) {
     const controller = new AbortController();
     let timedOut = false;
+    if (parentSignal?.aborted) {
+      return Promise.reject(parentSignal.reason || new Error("学习请求已取消。"));
+    }
     const onParentAbort = () => controller.abort(parentSignal.reason);
     parentSignal.addEventListener("abort", onParentAbort, { once: true });
     const timer = setTimeout(() => {
@@ -257,7 +260,8 @@
       model: model.model,
       transport: metadata.transport || (model.apiEndpoint ? "direct-endpoint" : "api"),
       chainId: metadata.chainId,
-      chainLabel: metadata.chainLabel
+      chainLabel: metadata.chainLabel,
+      contextWindow: metadata.contextWindow
     });
     try {
       let text;
@@ -336,8 +340,12 @@
               surface: "in-page-panel",
               chainId: requestId,
               chainLabel: "网页内学习解释",
+              onStage: ({ text }) => event(tabId, requestId, { event: "status", text }),
               llmAssess: async () => {
-                const text = await assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport, chainId: requestId, chainLabel: "网页内学习解释" });
+                const text = await assess(model, assessmentPrompt, assessmentSignal, {
+                  surface: "in-page-panel", transport, chainId: requestId, chainLabel: "网页内学习解释",
+                  contextWindow: candidate.contextWindow
+                });
                 return global.ContextLensContextAssessment.parse(text);
               }
             }),
@@ -373,7 +381,10 @@
         memory: memoryState.memory
       });
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "started", provider: model.provider, transport });
-      answerTimeline = global.ContextLensLlmTimeline.start({ surface: "in-page-panel", purpose: "learning-answer", provider: model.provider, model: model.model, transport, chainId: requestId, chainLabel: "网页内学习解释" });
+      answerTimeline = global.ContextLensLlmTimeline.start({
+        surface: "in-page-panel", purpose: "learning-answer", provider: model.provider, model: model.model,
+        transport, chainId: requestId, chainLabel: "网页内学习解释", contextWindow: prepared.context?.contextWindow
+      });
       await streamAnswer(model, prompt, controller.signal, sendChunk, answerTimeline);
       void answerTimeline.finish("completed");
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport });

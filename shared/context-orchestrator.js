@@ -1,4 +1,4 @@
-/** 上下文编排器：执行 LLM 评估、5/10/20 扩展和需要用户补充的终止策略。 */
+/** 上下文编排器：执行充分性评估、5/10/20 扩展，并在最大窗口直接回答。 */
 (function registerContextOrchestrator(global) {
   const AUTO_STEPS = [0, 5, 10, 20];
 
@@ -49,16 +49,19 @@
       const decision = normalizeDecision(assessmentResult);
       // 供应商未遵守 JSON 契约时直接回答，避免出现无意义的自动重试循环。
       if (!decision || decision.sufficient) return { status: "ready", context: working, assessment: decision };
-      if (radius === 20) {
-        return {
-          status: "needs-user-context",
-          message: decision.missing || "自动扩展到上下各 20 行后仍缺少必要上下文，请粘贴相关定义、调用处或章节内容。",
-          assessment: decision
-        };
-      }
       const nextRadius = AUTO_STEPS[index + 1];
       onProgress(`信息不足，正在扩展到上下各 ${nextRadius} 行…`);
       working = await expand(nextRadius, decision.direction) || working;
+      // 20 行是自动扩展的上限：拿到最大窗口后直接交给最终回答模型，
+      // 不再额外进行一次 Jev 或 LLM 充分性判断。
+      if (nextRadius === AUTO_STEPS[AUTO_STEPS.length - 1]) {
+        onProgress(`已读取上下各 ${nextRadius} 行最大上下文，正在直接生成回答…`);
+        return {
+          status: "ready",
+          context: working,
+          assessment: { ...decision, reachedMaxContext: true, reason: "已达到自动上下文最大行数，跳过后续充分性判断。" }
+        };
+      }
     }
     return { status: "ready", context: working };
   }

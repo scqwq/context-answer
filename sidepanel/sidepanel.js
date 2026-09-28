@@ -123,6 +123,18 @@ const MAX_CHAT_INPUT_HISTORY_ITEMS = 10;
 let tabPendingClipboardImages = {}; // tabId -> [{ id, dataUrl, mimeType, size, name }]
 let tabRequestStates = {}; // tabId -> { activeReader, activeAbortController, contextWorkflowId, learningTimelineChainId, timeoutId, isRequestInProgress, userAbortRequested }
 
+// 接收后台评估路由的阶段变化，避免 Jev 回退到 LLM 后仍显示旧状态。
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "CONTEXT_ASSESSMENT_STATUS") return;
+  const tabId = Object.keys(tabRequestStates).find((id) => getTabRequestState(Number(id)).contextWorkflowId === String(message.requestId || ""));
+  if (!tabId) return;
+  const notice = document.getElementById("learning-context-notice");
+  if (notice && message.text) {
+    notice.hidden = false;
+    notice.textContent = message.text;
+  }
+});
+
 function createRequestState() {
   return {
     activeReader: null,
@@ -2197,13 +2209,41 @@ function loadProviderCacheToForm(provider) {
 
 
 
+async function exportAllLogs() {
+  const button = document.getElementById("llm-export-btn");
+  if (button) button.disabled = true;
+  try {
+    const [timelineResponse, diagnosticResponse] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 60 }),
+      chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS", limit: 80 })
+    ]);
+    if (!timelineResponse?.success || !diagnosticResponse?.success) {
+      throw new Error(timelineResponse?.error || diagnosticResponse?.error || "无法读取调用日志。");
+    }
+    const text = window.ContextLensLogExport.buildText({ runs: timelineResponse.runs, entries: diagnosticResponse.entries });
+    const response = await chrome.runtime.sendMessage({
+      type: "DOWNLOAD_LOG_TEXT",
+      text,
+      filename: window.ContextLensLogExport.filename()
+    });
+    if (!response?.success) throw new Error(response?.error || "无法启动日志下载。");
+    appendMessage("assistant", "日志已准备下载，请在浏览器对话框中选择保存位置。");
+  } catch (error) {
+    appendMessage("assistant", `日志导出失败：${error.message || "未知错误"}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 // Setup Event Listeners
 function setupEventListeners() {
   setupAutoScrollPauseOnUserScroll();
 
   const llmTimelineButton = document.getElementById("llm-timeline-btn");
+  const llmExportButton = document.getElementById("llm-export-btn");
   if (llmTimelineButton) {
     llmTimelineButton.addEventListener("click", async () => {
+      if (llmExportButton) llmExportButton.classList.remove("hidden");
       const response = await chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 60 }).catch(() => null);
       if (!response?.success) {
         appendMessage("assistant", `无法读取 LLM 调用时间线：${response?.error || "未知错误"}`);
@@ -2212,6 +2252,9 @@ function setupEventListeners() {
       const text = window.ContextLensLlmTimelineView?.format?.(response.runs || [], { markdown: true, maxChains: 15 }) || "";
       appendMessage("assistant", `## LLM 调用时间线（最近 15 条请求链）\n\n${text || "暂无调用记录。"}`);
     });
+  }
+  if (llmExportButton) {
+    llmExportButton.addEventListener("click", exportAllLogs);
   }
 
   // Delegated copy event listener for messagesList
@@ -3952,7 +3995,9 @@ async function handleSendMessage() {
       const assessmentSettings = window.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {};
       const jevReady = assessmentSettings.jev?.enabled && assessmentSettings.jev?.apiKey && assessmentSettings.jev?.apiUrl && assessmentSettings.jev?.model;
       learningNotice.hidden = false;
-      learningNotice.textContent = activeLearningOptions.contextMode === "manual"
+      learningNotice.textContent = activeLearningOptions.contextAssessmentEnabled === false
+        ? "自动上下文评估已关闭，正在仅使用当前选区…"
+        : activeLearningOptions.contextMode === "manual"
         ? (activeLearningOptions.manualLines === 0
           ? "手动模式：仅使用当前选区，不读取额外上下文。"
           : `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`)
@@ -4288,7 +4333,13 @@ ${text}`;
   requestState.userAbortRequested = false;
   setRequestRunningState(true, messageTabId);
   try {
-    await triggerAIStreamResponse(fullPrompt, messageTabId, effectiveCwd, outgoingImageAttachments);
+    await triggerAIStreamResponse(
+      fullPrompt,
+      messageTabId,
+      effectiveCwd,
+      outgoingImageAttachments,
+      activeLearningOptions ? currentContext?.contextData?.contextWindow : null
+    );
   } finally {
     setRequestRunningState(false, messageTabId);
     requestState.userAbortRequested = false;
@@ -5076,7 +5127,7 @@ function showCopyFeedback(btn, isCodeBlock = false) {
 }
 
 // Unified Streaming Handler
-async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = "", outgoingImageAttachments = []) {
+async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = "", outgoingImageAttachments = [], timelineContextWindow = null) {
   const targetTabId = messageTabId || currentTabId;
   const requestState = getTabRequestState(targetTabId);
   const timelineChainId = requestState.learningTimelineChainId || `native-chat-${targetTabId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -5200,12 +5251,13 @@ async function triggerAIStreamResponse(promptText, messageTabId, effectiveCwd = 
       if (llmTimeline) return llmTimeline;
       llmTimeline = window.ContextLensLlmTimeline?.start?.({
         surface: "native-side-panel",
-        purpose: apiProvider.endsWith("-agent") ? "local-agent-answer" : "chat-answer",
+        purpose: apiProvider.endsWith("-agent") ? "local-agent-answer" : (requestState.learningTimelineChainId ? "learning-answer" : "chat-answer"),
         provider: apiProvider,
         model: modelName,
         transport: apiProvider.endsWith("-agent") ? "local-agent-bridge" : "api",
         chainId: timelineChainId,
-        chainLabel: timelineChainLabel
+        chainLabel: timelineChainLabel,
+        contextWindow: timelineContextWindow
       }) || null;
       return llmTimeline;
     };

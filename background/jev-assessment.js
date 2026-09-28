@@ -83,15 +83,22 @@
       model: config.model,
       transport: "typesafe-systemone",
       chainId,
-      chainLabel
+      chainLabel,
+      contextWindow: context?.contextWindow
     });
     try {
-      void timeline.dispatch();
+      const requestBody = JSON.stringify({
+        model: config.model,
+        state: buildState({ context, question, languageHint, radius }),
+        questions: buildQuestions()
+      });
+      // 只记录请求字符数，不记录请求内容，便于区分服务端慢与请求体过大。
+      void timeline.dispatch({ requestChars: requestBody.length });
       const response = await fetch(config.apiUrl, {
         method: "POST",
         signal,
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({ model: config.model, state: buildState({ context, question, languageHint, radius }), questions: buildQuestions() })
+        body: requestBody
       });
       void timeline.response(response.status);
       if (!response.ok) await responseError(response);

@@ -1,5 +1,5 @@
 /**
- * 上下文判断路由：优先使用 Jev 的结构化决策，低置信度或不可用时回退既有 LLM JSON 判断。
+ * 上下文判断路由：Jev 高置信度直接决策；低置信度按上下文不足扩展，异常或未配置时才可回退 LLM。
  */
 (function registerContextAssessmentRouter(global) {
   async function record(phase, details) {
@@ -13,7 +13,7 @@
     });
   }
 
-  async function assess({ context, question, languageHint, radius, assessmentConfig, signal, surface, chainId, chainLabel, llmAssess }) {
+  async function assess({ context, question, languageHint, radius, assessmentConfig, signal, surface, chainId, chainLabel, llmAssess, onStage = () => {} }) {
     const config = assessmentConfig || {};
     const jev = config.jev || {};
     const llmEnabled = config.llmEnabled !== false;
@@ -21,6 +21,7 @@
 
     if (jev.enabled && global.ContextLensJevAssessment.isConfigured(jev)) {
       try {
+        await onStage({ stage: "jev", text: "正在由 Jev 判断选区是否足够回答…" });
         await record("context-assessment-jev-started", { surface, provider: "typesafe", transport: "typesafe-systemone" });
         const result = await global.ContextLensJevAssessment.assess({ context, question, languageHint, radius, config: jev, signal, surface, chainId, chainLabel });
         if (result.status === "decision") {
@@ -29,6 +30,13 @@
         }
         unavailableReason = result.reason;
         await record("context-assessment-jev-uncertain", { surface, provider: "typesafe", transport: "typesafe-systemone", error: result.reason });
+        // 低置信度不再额外调用 LLM；按信息不足扩展窗口后，继续交给 Jev 判断。
+        return {
+          sufficient: false,
+          direction: "both",
+          source: "jev-low-confidence",
+          missing: "Jev 对当前上下文置信度不足，正在扩展相邻上下文后重新判断。"
+        };
       } catch (error) {
         await record("context-assessment-jev-failed", { surface, provider: "typesafe", transport: "typesafe-systemone", status: error.status, error: error.message });
         if (!llmEnabled) {
@@ -41,6 +49,7 @@
     }
 
     if (llmEnabled) {
+      await onStage({ stage: "llm", text: "Jev 不可用，正在由 LLM 判断选区是否足够回答…" });
       const decision = await llmAssess();
       return { ...decision, source: "llm" };
     }

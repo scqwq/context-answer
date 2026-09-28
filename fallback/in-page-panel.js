@@ -49,6 +49,8 @@
     elements.home.textContent = t("home");
     elements.history.textContent = t("history");
     elements.diagnostics.textContent = t("log");
+    elements.exportLogs.textContent = t("exportLogs");
+    elements.exportLogs.title = t("exportLogs");
     elements.settings.title = t("settings");
     elements.settings.setAttribute("aria-label", t("settings"));
     elements.close.title = t("close");
@@ -120,6 +122,7 @@
     viewMode = "home";
     elements.workspace.hidden = false;
     elements.settingsView.hidden = true;
+    elements.exportLogs.hidden = true;
     elements.answer.dataset.rawAnswer = activeAnswerText;
     if (currentMode === "chat") renderChatConversation();
     else renderAnswer(activeAnswerText || "上下文已载入。可一键学习解释，或输入具体问题。");
@@ -131,6 +134,7 @@
     viewMode = nextView;
     elements.workspace.hidden = false;
     elements.settingsView.hidden = true;
+    elements.exportLogs.hidden = nextView !== "diagnostics";
   }
 
   function settingField(className) {
@@ -260,6 +264,7 @@
     viewMode = "settings";
     elements.workspace.hidden = true;
     elements.settingsView.hidden = false;
+    elements.exportLogs.hidden = true;
     const [preferencesResponse, modelsResponse] = await Promise.all([
       chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null),
       chrome.runtime.sendMessage({ type: "GET_CONTEXT_ANSWER_MODELS" }).catch(() => null)
@@ -331,7 +336,7 @@
     shadow.appendChild(stylesheet);
     const panel = document.createElement("section");
     panel.className = "panel";
-    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="language-toggle header-utility" title="Switch to English">中文 / EN</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
+    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="export-logs header-utility" title="导出日志" hidden>导出</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="language-toggle header-utility" title="Switch to English">中文 / EN</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
     panelRoot = panel;
     shadow.appendChild(panel);
     document.documentElement.appendChild(host);
@@ -362,6 +367,7 @@
       settings: panel.querySelector(".settings"),
       close: panel.querySelector(".close"),
       diagnostics: panel.querySelector(".diagnostics"),
+      exportLogs: panel.querySelector(".export-logs"),
       optionHint: panel.querySelector(".option-hint"),
       settingsPreferences: panel.querySelector(".settings-preferences"),
       modelListNote: panel.querySelector(".model-list-note"),
@@ -379,6 +385,7 @@
     elements.home.addEventListener("click", showHome);
     elements.history.addEventListener("click", showHistory);
     elements.diagnostics.addEventListener("click", showDiagnostics);
+    elements.exportLogs.addEventListener("click", exportLogs);
     elements.settings.addEventListener("click", showSettings);
     elements.languageToggle.addEventListener("click", async () => {
       uiLanguage = await global.ContextAnswerI18n.toggle(uiLanguage);
@@ -573,11 +580,38 @@
     await chrome.runtime.sendMessage({ type: "CANCEL_FALLBACK_REQUEST", requestId }).catch(() => null);
   }
 
+  async function exportLogs() {
+    if (!elements?.exportLogs) return;
+    elements.exportLogs.disabled = true;
+    setVisibleStatus("正在准备日志导出…");
+    try {
+      const [timelineResponse, diagnosticResponse] = await Promise.all([
+        chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 60 }),
+        chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS", limit: 80 })
+      ]);
+      if (!timelineResponse?.success || !diagnosticResponse?.success) {
+        throw new Error(timelineResponse?.error || diagnosticResponse?.error || "无法读取调用日志。");
+      }
+      const text = global.ContextLensLogExport.buildText({ runs: timelineResponse.runs, entries: diagnosticResponse.entries });
+      const response = await chrome.runtime.sendMessage({
+        type: "DOWNLOAD_LOG_TEXT",
+        text,
+        filename: global.ContextLensLogExport.filename()
+      });
+      if (!response?.success) throw new Error(response?.error || "无法启动日志下载。");
+      setVisibleStatus("日志已准备下载，请在浏览器对话框中选择保存位置。");
+    } catch (error) {
+      setVisibleStatus(error.message || "日志导出失败。", "status error");
+    } finally {
+      elements.exportLogs.disabled = false;
+    }
+  }
+
   async function showDiagnostics() {
     showWorkspaceView("diagnostics");
     const [timelineResponse, diagnosticResponse] = await Promise.all([
       chrome.runtime.sendMessage({ type: "GET_LLM_TIMELINES", limit: 60 }),
-      chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS" })
+      chrome.runtime.sendMessage({ type: "GET_REQUEST_DIAGNOSTICS", limit: 80 })
     ]);
     if (viewMode !== "diagnostics") return;
     if (!timelineResponse?.success || !diagnosticResponse?.success) {

@@ -2,175 +2,143 @@
 
 [中文说明](README_ZH.md)
 
-ContextLens is a Manifest V3 Chromium extension for learning from webpages. Select code or technical text, then open the unified **ContextAnswer** in-page panel to get a concise explanation, translation, context-aware answer, or continue a normal chat.
+ContextLens 是一个 Chromium Manifest V3 扩展：在网页上划词或右键选择内容后，默认打开可拖动的 **ContextAnswer** 网页内面板，提供学习解释、普通聊天和上下文补充。原生侧边栏仍可作为兼容宿主使用。
 
-The default panel is implemented with Shadow DOM rather than `chrome.sidePanel`, so it works in most Chromium-based browsers that allow extension content scripts. The legacy native side panel remains available as an optional compatibility host.
+## 功能概览
 
-## Highlights
+- 学习模式与普通聊天；支持流式输出、停止、历史和中英文界面。
+- 自动上下文在 `0 → 5 → 10` 行判断，不足时扩展至最大 20 行后直接回答；Jev 高置信度判断充分后也会直接回答，Jev 不可用或异常时才由 LLM JSON 判断兜底。
+- 支持 Gemini、OpenAI、Claude、兼容 OpenAI 的接口、本地 API，以及可选的本地 CLI Agent Bridge。
+- 日志按请求链归组，显示每次 Jev 请求的时间、上下文窗口和请求体字符数；日志可导出为脱敏 `.txt`。
 
-- Select text with the floating Lens button or the right-click menu; the extension extracts code blocks, tables, headings, surrounding content, and page metadata.
-- ContextAnswer has **Learning** and **Chat** modes, a draggable title bar, streaming output, stop control, answer history, timing logs, and a shared Chinese/English switch.
-- Learning mode supports language hints and three context strategies: automatic, manual `0 / 5 / 10 / 20` lines, and pasted supplemental context.
-- Automatic context selection uses TypeSafe Jev when configured and falls back to a short LLM JSON assessment. It expands context in `0 → 5 → 10 → 20` steps only when necessary.
-- Add, edit, remove, and select multiple Gemini, OpenAI, Claude, custom OpenAI-compatible API models, or local CLI Agents from the Settings page.
-- Preload up to five additional models in `.env`; use a local Agent Bridge only when calling CLI Agents.
-- Learning memory keeps up to 20 turns for the same normalized selection, injecting a prepared summary plus the latest four turns. Summaries run asynchronously after answers complete.
-- Per-call LLM timelines group assessment, answer, and background memory-summary calls without logging prompts, selections, keys, or answer bodies.
+## 快速开始
 
-## Requirements
-
-- A Chromium-based browser that permits unpacked extensions: Chrome, Edge, Lenovo Browser, and similar Chromium browsers.
-- Node.js 18+ and `pnpm` (or a compatible package manager) for generating local runtime configuration.
-- An API key and model endpoint for a remote model, or a compatible local model endpoint.
-- Optional local Agent mode: Node.js plus an installed Claude Code, Codex CLI, Antigravity CLI, or Copilot CLI.
-
-## Quick start
-
-1. Install dependencies:
+1. 安装依赖：
 
    ```powershell
    pnpm install
    ```
 
-2. Copy `.env.example` to `.env`, then configure one default model. For an OpenAI-compatible provider:
+2. 将 `.env.example` 复制为 `.env`，至少配置默认模型的 Provider、Key、URL 和 Model。
 
-   ```env
-   CONTEXTLENS_PANEL_MODE=in-page
-   CONTEXTLENS_API_PROVIDER=custom
-   CONTEXTLENS_API_KEY=your-key
-   CONTEXTLENS_API_URL=https://provider.example/v1
-   CONTEXTLENS_MODEL=your-model
-   ```
-
-3. Generate the extension-only runtime configuration:
+3. 生成运行时配置：
 
    ```powershell
    pnpm run build:env
    ```
 
-4. Open your browser extension page, enable Developer mode, choose **Load unpacked**, and select this repository root.
+4. 在 Chromium 扩展管理页启用开发者模式，选择“加载已解压的扩展程序”，并选择本仓库根目录。
 
-5. Select text on a webpage, click the floating Lens icon, and use ContextAnswer. After source, manifest, or `.env` changes, run `pnpm run build:env` when applicable and reload the extension.
+修改 `.env` 后需要重新执行构建；修改扩展脚本、清单或配置后需要重新加载扩展。
 
-## ContextAnswer usage
+## `.env` 配置模块
 
-The default `in-page` host opens a draggable panel. Its header contains Home, History, Logs, Settings, Chinese/English, and Close controls.
+`.env` 不会被浏览器直接读取；构建命令会生成被 Git 忽略的 `sidepanel/config.local.js`。不要提交 `.env`、生成配置或任何 Key。
 
-- **Learning mode**: select a source language and context strategy, then choose “Explain selection” or ask a focused question.
-- **Chat mode**: ask without a selection; the current panel keeps the latest 20 turns only.
-- **Automatic context**: Jev first, LLM fallback; it stops after 20 lines each side and asks you to paste the missing definition or call site.
-- **Manual context**: `0` sends only the selected text and never invokes Jev/LLM sufficiency assessment.
-- **Add context**: paste remote types, function definitions, callers, or document paragraphs into the supplementary field.
-- **Language**: the `中文 / EN` button shares the `uiLanguage` preference with the legacy native side panel. It translates ContextAnswer controls; response language remains a separate learning setting in `.env`.
+| 模块 | 何时需要配置 | 重要变量 |
+| --- | --- | --- |
+| 默认远程模型 | 必需，除非使用本地模型或 Agent | `CONTEXTLENS_API_PROVIDER`、`API_KEY`、`API_URL` / `API_ENDPOINT`、`MODEL` |
+| Jev 上下文判断 | 希望自动判断选区是否足够时 | `CONTEXTLENS_JEV_ENABLED`、`JEV_API_KEY`、`JEV_API_URL`、`JEV_MODEL` |
+| 面板与学习默认值 | 调整界面与回答习惯时 | `PANEL_MODE`、`LEARNING_RESPONSE_LANGUAGE`、`LEARNING_CONTEXT_MODE` |
+| 额外预置模型 | 希望主页可切换多个只读模型时 | `CONTEXTLENS_EXTRA_MODEL_1_*` 至 `_5_*` |
+| 本地 API | 使用 Ollama、LM Studio、vLLM 等时 | `USE_LOCAL_MODEL`、`LOCAL_API_URL`、`LOCAL_MODEL` |
+| 本地 Agent Bridge | 使用 Claude/Codex 等本机 CLI 时 | `USE_LOCAL_AGENT`、`LOCAL_AGENT_PROVIDER`、`BRIDGE_URL` |
 
-## Model management
+变量均以 `CONTEXTLENS_` 为完整前缀；上表为便于阅读省略此前缀的部分名称。
 
-The Home page only contains the active-model selector. Keys, URLs, model form fields, and model lists are deliberately confined to **Settings**.
+## 使用方式
 
-- Add a browser-local model with a provider, display name, model name, and the required endpoint/key fields.
-- The saved-model list supports edit and delete. A saved model is selectable from Home after it is added.
-- `.env` models appear as read-only presets. Use **Copy to edit** to create a browser-local editable copy.
-- Choosing “Environment default (.env)” on Home clears the browser-local active model and returns to the default configuration.
+- **学习模式**：选择语言和上下文策略后，点击“解释选区”或提问。
+- **普通聊天**：不需要选区，面板保留最近 20 轮会话。
+- **自动上下文**：最多扩展到上下各 20 行；到达该上限后直接生成回答，不再多发一次充分性判断请求。
+- **手动上下文**：可选上下各 `0 / 5 / 10 / 20` 行；`0` 只发送选区，不发起充分性判断。
+- **补充资料**：将远处定义、调用方或文档段落粘贴到补充框，只发送用户主动添加的内容。
 
-### Default model variables
+## 日志与隐私
 
-| Variable | Purpose |
-| --- | --- |
-| `CONTEXTLENS_API_PROVIDER` | `gemini`, `openai`, `claude`, or `custom` |
-| `CONTEXTLENS_API_KEY` | API key for the default remote model |
-| `CONTEXTLENS_API_URL` | Custom/OpenAI-compatible base URL; `/chat/completions` is appended when no full endpoint is set |
-| `CONTEXTLENS_API_ENDPOINT` | Optional full endpoint; used exactly as written |
-| `CONTEXTLENS_MODEL` | Default model identifier |
-| `CONTEXTLENS_PANEL_MODE` | `in-page` (default), `auto`, or `native` |
+日志和性能时间线存放在扩展的 `chrome.storage.local`，不写入项目文件。日志页显示最近 15 条请求链；“导出”可保存全部已保留的脱敏日志为 `.txt`。
 
-### Extra `.env` model presets
+时间线和导出内容不会保存 API Key、完整 URL、请求头、提示词、选区、模型回答或推理内容。学习回答历史与学习记忆是独立、用户可见的功能数据，不会进入日志导出。
 
-Use slots `1` through `5` to preload models before opening the extension UI:
-
-```env
-# provider: gemini | openai | claude | custom | claude-agent | codex-agent | antigravity-agent | copilot-agent
-CONTEXTLENS_EXTRA_MODEL_1_NAME=DeepSeek Flash
-CONTEXTLENS_EXTRA_MODEL_1_PROVIDER=custom
-CONTEXTLENS_EXTRA_MODEL_1_API_KEY=your-key
-CONTEXTLENS_EXTRA_MODEL_1_API_URL=https://provider.example/v1
-CONTEXTLENS_EXTRA_MODEL_1_API_ENDPOINT=
-CONTEXTLENS_EXTRA_MODEL_1_MODEL=deepseek-flash
-CONTEXTLENS_EXTRA_MODEL_1_BRIDGE_URL=
-CONTEXTLENS_EXTRA_MODEL_1_COMMAND_PATH=
-```
-
-Copy the group and change the index to `2`, `3`, `4`, or `5`. Empty or incomplete slots are ignored. After editing `.env`, run `pnpm run build:env` and reload the extension. Presets are never copied to browser-local model storage.
-
-### Learning and assessment variables
-
-| Variable | Purpose |
-| --- | --- |
-| `CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE` | Default answer language, such as `zh-CN` |
-| `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | Whether learning answers include translation when useful |
-| `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto`, `manual`, or `custom` default |
-| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `0`, `5`, `10`, or `20` |
-| `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | Allows automatic Jev/LLM sufficiency assessment |
-| `CONTEXTLENS_JEV_ENABLED` | Enables the TypeSafe Jev primary assessment route |
-| `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | Enables LLM JSON fallback assessment |
-| `CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS` | Total learning workflow timeout, default `90000` |
-| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | Per-assessment timeout, default `15000` |
-
-When both Jev and LLM assessment are disabled, automatic context mode answers from the selection only and clearly reports that no sufficiency decision ran.
-
-### Local API models and local Agents
-
-`CONTEXTLENS_USE_LOCAL_MODEL=true` selects `CONTEXTLENS_LOCAL_API_*` variables for an Ollama, LM Studio, vLLM, or other compatible endpoint.
-
-Local CLI Agents are different: set `CONTEXTLENS_USE_LOCAL_AGENT=true`, choose a `CONTEXTLENS_LOCAL_AGENT_PROVIDER`, and start the Bridge:
-
-```powershell
-pnpm run bridge
-```
-
-`CONTEXTLENS_BRIDGE_URL` defaults to `http://localhost:3100`. It is required only for `*-agent` providers; regular Gemini, OpenAI, Claude, and compatible API models do not use it. If both local API and local Agent flags are enabled, the Agent has priority. Local Agents skip short context-assessment calls to avoid launching an extra CLI process.
-
-## Existing capabilities and architecture
-
-The project retains ContextLens’s original capabilities: right-click entry points, code/table/heading extraction, optional full-page reference in the legacy native panel, native side-panel conversations, URL model rules, and local Agent Bridge support.
-
-```text
-selection / right-click
-  -> content.js extracts contextData
-  -> background/panel-capabilities.js selects in-page or native host
-  -> fallback/in-page-panel.js renders ContextAnswer by default
-  -> background/fallback-chat.js orchestrates assessment and SSE answer streaming
-  -> shared/learning-memory.js persists scoped learning memory after completion
-```
-
-Important directories:
-
-| Path | Responsibility |
-| --- | --- |
-| `content.js` | Selection, context-menu element, DOM and context-window extraction |
-| `background.js` | Browser message routing and panel lifecycle |
-| `background/fallback-chat.js` | In-page API/Agent streaming, cancellation, assessment, and memory-summary calls |
-| `fallback/` | Shadow DOM ContextAnswer UI, renderer, drag behavior, and i18n |
-| `shared/` | Prompts, options, models, preferences, history, memory, diagnostics, and timelines |
-| `sidepanel/` | Existing native side-panel implementation and generated local configuration |
-| `bridge/` | Optional local Node Agent Bridge |
-
-## Privacy and diagnostics
-
-- `.env` and generated `sidepanel/config.local.js` are ignored by Git. Never commit keys.
-- Browser-added models are saved in `chrome.storage.local`; they can contain keys and must not be exported casually.
-- LLM timeline and diagnostic storage never retains keys, URLs, prompts, selections, headers, answer text, or reasoning content.
-- User-visible answer history and learning memory intentionally retain bounded answer text in separate storage keys; they are never mixed into logs.
-- In-page panels cannot run on browser internal pages, extension stores, or pages where content scripts are blocked.
-
-## Development checks
+## 开发
 
 ```powershell
 pnpm run check
 pnpm run build:env
+pnpm run bridge  # 仅本地 Agent 模式需要
 ```
 
-Use `AGENTS.md` for detailed module contracts, persistence boundaries, and future-maintenance rules.
+主要目录：`content.js` 采集选区与上下文，`background/` 负责消息与模型请求，`fallback/` 是默认网页内面板，`shared/` 放提示词、状态、日志等共享逻辑，`sidepanel/` 保留原生侧边栏兼容实现。
+
+详细的模块契约、存储边界和维护规范请阅读 [AGENTS.md](AGENTS.md)。
+
+## 配置细则
+
+### 默认远程模型
+
+```env
+CONTEXTLENS_PANEL_MODE=in-page
+CONTEXTLENS_API_PROVIDER=custom
+CONTEXTLENS_API_KEY=your-key
+CONTEXTLENS_API_URL=https://provider.example/v1
+CONTEXTLENS_API_ENDPOINT=
+CONTEXTLENS_MODEL=your-model
+```
+
+- `CONTEXTLENS_API_PROVIDER`：`gemini`、`openai`、`claude` 或 `custom`。
+- `CONTEXTLENS_API_ENDPOINT`：可选完整地址；填写后不会拼接 `/chat/completions`。
+- `CONTEXTLENS_PANEL_MODE`：`in-page`（默认）、`auto` 或 `native`。
+
+### Jev 与 LLM 判断兜底
+
+```env
+CONTEXTLENS_JEV_ENABLED=true
+CONTEXTLENS_JEV_API_KEY=your-jev-key
+CONTEXTLENS_JEV_API_URL=https://api.typesafe.ai/v1/systemone
+CONTEXTLENS_JEV_MODEL=jev-latest
+CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD=0.75
+CONTEXTLENS_LLM_ASSESSMENT_ENABLED=true
+```
+
+Jev 低置信度会按信息不足扩展并重试，不会立即调用 LLM。`CONTEXTLENS_LLM_ASSESSMENT_ENABLED` 只控制 Jev 未配置或请求异常时的 LLM 兜底。两者均关闭时，自动模式直接用当前选区回答。
+
+### 学习默认值
+
+| 变量 | 可选值 / 默认含义 |
+| --- | --- |
+| `CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE` | 如 `zh-CN` |
+| `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | `true` / `false` |
+| `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto`、`manual`、`custom` |
+| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `0`、`5`、`10`、`20` |
+| `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | `true` / `false` |
+| `CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS` | 总工作流超时，默认 `90000` |
+| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | 单次判断超时，默认 `15000` |
+| `CONTEXTLENS_LEARNING_RESPONSE_DETAIL` | `compact` 或 `normal` |
+| `CONTEXTLENS_LEARNING_OUTPUT_STYLE` | `focus` 或 `standard` |
+| `CONTEXTLENS_LEARNING_CODE_EXAMPLES` | `never`、`on-demand`、`always` |
+
+### 额外模型、本地 API 与 Agent
+
+额外预置模型最多五组：`CONTEXTLENS_EXTRA_MODEL_1_*` 至 `_5_*`。每组可配置 `NAME`、`PROVIDER`、`API_KEY`、`API_URL`、`API_ENDPOINT`、`MODEL`，不完整的组会被忽略。
+
+本地 API 使用：
+
+```env
+CONTEXTLENS_USE_LOCAL_MODEL=true
+CONTEXTLENS_LOCAL_API_URL=http://localhost:11434/v1
+CONTEXTLENS_LOCAL_MODEL=qwen2.5-coder:7b
+```
+
+本地 CLI Agent 使用：
+
+```env
+CONTEXTLENS_USE_LOCAL_AGENT=true
+CONTEXTLENS_LOCAL_AGENT_PROVIDER=codex-agent
+CONTEXTLENS_BRIDGE_URL=http://localhost:3100
+```
+
+Agent Provider 可选 `claude-agent`、`codex-agent`、`antigravity-agent` 或 `copilot-agent`。启用 Agent 后运行 `pnpm run bridge`；若本地 API 与 Agent 同时开启，Agent 优先。
 
 ## Origin and license
 
-This project is based on [cola-sk/context-lens](https://github.com/cola-sk/context-lens). License: MIT.
+Based on [cola-sk/context-lens](https://github.com/cola-sk/context-lens). License: MIT.

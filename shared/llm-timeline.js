@@ -25,6 +25,23 @@
     return Math.max(0, Date.now() - startedMs);
   }
 
+  // 仅保留上下文窗口的行数元数据，绝不保存选区或网页内容。
+  function normalizeContextWindow(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const radius = Number(raw.radius);
+    const startLine = Number(raw.startLine);
+    const endLine = Number(raw.endLine);
+    const totalLines = Number(raw.totalLines);
+    const kind = ["selection", "code-line", "text-line"].includes(raw.kind) ? raw.kind : "unknown";
+    return {
+      radius: Number.isFinite(radius) ? Math.max(0, Math.min(20, Math.floor(radius))) : 0,
+      kind,
+      ...(Number.isFinite(startLine) && startLine > 0 ? { startLine: Math.floor(startLine) } : {}),
+      ...(Number.isFinite(endLine) && endLine > 0 ? { endLine: Math.floor(endLine) } : {}),
+      ...(Number.isFinite(totalLines) && totalLines > 0 ? { totalLines: Math.floor(totalLines) } : {})
+    };
+  }
+
   function enqueue(mutator) {
     writeChain = writeChain
       .catch(() => undefined)
@@ -55,7 +72,7 @@
     });
   }
 
-  function start({ surface, purpose, provider = "unknown", model = "未命名模型", transport = "unknown", chainId = "", chainLabel = "" }) {
+  function start({ surface, purpose, provider = "unknown", model = "未命名模型", transport = "unknown", chainId = "", chainLabel = "", contextWindow = null }) {
     const id = createId();
     const startedMs = Date.now();
     const run = {
@@ -69,17 +86,25 @@
       transport,
       chainId: String(chainId || id).slice(0, 160),
       chainLabel: String(chainLabel || "单次模型调用").slice(0, 80),
+      contextWindow: normalizeContextWindow(contextWindow),
       outcome: "running",
       events: [],
-      metrics: { responseChunks: 0, responseBytes: 0, outputChunks: 0, outputChars: 0 }
+      metrics: { requestChars: 0, responseChunks: 0, responseBytes: 0, outputChunks: 0, outputChars: 0 }
     };
     appendEvent(run, "request-created", { description: "已创建模型调用" });
     void enqueue((runs) => [...runs, run]);
 
     return {
       id,
-      dispatch() {
-        return update(id, (current) => appendEvent(current, "request-dispatched", { description: "已发起 HTTP 请求" }));
+      dispatch(details = {}) {
+        const requestChars = Number(details.requestChars);
+        return update(id, (current) => {
+          if (Number.isFinite(requestChars) && requestChars >= 0) current.metrics.requestChars = requestChars;
+          appendEvent(current, "request-dispatched", {
+            description: "已发起 HTTP 请求",
+            ...(Number.isFinite(requestChars) && requestChars >= 0 ? { requestChars } : {})
+          });
+        });
       },
       response(status) {
         return update(id, (current) => {

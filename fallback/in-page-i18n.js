@@ -3,7 +3,7 @@
   const STORAGE_KEY = "uiLanguage";
   const TEXT = {
     zh: {
-      home: "主页", history: "历史", log: "日志", settings: "打开设置", close: "关闭", modelSelectTitle: "切换当前模型",
+      home: "主页", history: "历史", log: "日志", exportLogs: "导出", settings: "打开设置", close: "关闭", modelSelectTitle: "切换当前模型",
       learning: "学习模式", chat: "普通聊天", environment: "环境默认模型（.env）",
       language: "语言", context: "上下文", automatic: "自动选择", manual: "手动选择", custom: "自行添加",
       lines: "上下各", selectionOnly: "0 行（仅选区）", lines5: "5 行", lines10: "10 行", lines20: "20 行",
@@ -23,7 +23,7 @@
       providerClaudeAgent: "Claude Code 本地 Agent", providerCodexAgent: "Codex CLI 本地 Agent", providerAntigravityAgent: "Antigravity 本地 Agent", providerCopilotAgent: "Copilot CLI 本地 Agent"
     },
     en: {
-      home: "Home", history: "History", log: "Logs", settings: "Open settings", close: "Close", modelSelectTitle: "Choose current model",
+      home: "Home", history: "History", log: "Logs", exportLogs: "Export", settings: "Open settings", close: "Close", modelSelectTitle: "Choose current model",
       learning: "Learn", chat: "Chat", environment: "Environment default (.env)",
       language: "Language", context: "Context", automatic: "Auto", manual: "Manual", custom: "Add context",
       lines: "Lines each side", selectionOnly: "0 (selection only)", lines5: "5 lines", lines10: "10 lines", lines20: "20 lines",

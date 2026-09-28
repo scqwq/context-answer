@@ -94,7 +94,7 @@ const learning = {
       model: env.CONTEXTLENS_JEV_MODEL || "jev-latest",
       confidenceThreshold: Math.min(0.95, Math.max(0.5, Number(env.CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD) || 0.75))
     },
-    // 保持现有实现作为 Jev 不可用、低置信度或关闭时的回退路线。
+    // 仅在 Jev 未配置或请求失败时作为可选兜底；Jev 低置信度会直接扩展上下文后重试 Jev。
     llmEnabled: isEnabled(env.CONTEXTLENS_LLM_ASSESSMENT_ENABLED, true)
   }
 };

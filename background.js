@@ -426,7 +426,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "GET_REQUEST_DIAGNOSTICS") {
-    ContextLensRequestDiagnostics.list(15)
+    ContextLensRequestDiagnostics.list(message.limit || 15)
       .then((entries) => sendResponse({ success: true, entries }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -435,6 +435,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_LLM_TIMELINES") {
     ContextLensLlmTimeline.list(message.limit || 15)
       .then((runs) => sendResponse({ success: true, runs }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "DOWNLOAD_LOG_TEXT") {
+    const text = String(message.text || "");
+    const requestedName = String(message.filename || "contextlens-logs.txt")
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+      .slice(0, 180) || "contextlens-logs.txt";
+    if (!text) {
+      sendResponse({ success: false, error: "没有可导出的日志。" });
+      return false;
+    }
+    const url = `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+    chrome.downloads.download({ url, filename: requestedName, saveAs: true, conflictAction: "uniquify" })
+      .then((downloadId) => sendResponse({ success: true, downloadId }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -529,8 +545,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         surface: "native-side-panel",
         chainId: requestId,
         chainLabel: "原生学习解释",
+        onStage: ({ text }) => chrome.runtime.sendMessage({ type: "CONTEXT_ASSESSMENT_STATUS", requestId, text }).catch(() => {}),
         llmAssess: async () => {
-          const text = await ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, { surface: "native-side-panel", transport, chainId: requestId, chainLabel: "原生学习解释" });
+          const text = await ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, {
+            surface: "native-side-panel", transport, chainId: requestId, chainLabel: "原生学习解释",
+            contextWindow: message.context?.contextWindow
+          });
           return ContextLensContextAssessment.parse(text);
         }
       }))
