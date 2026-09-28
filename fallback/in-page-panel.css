@@ -48,6 +48,8 @@ button:disabled, textarea:disabled { cursor: not-allowed; opacity: .55; }
 .chat-bubble.user { margin-left: 32px; color: #312e81; background: #ede9fe; }
 .chat-bubble.assistant { margin-right: 18px; background: #f8fafc; border: 1px solid #e5e7eb; }
 .settings-view { display: grid; gap: 9px; }
+/* 作者样式 display:grid 会覆盖浏览器对 hidden 的默认规则，必须显式处理视图切换。 */
+.settings-view[hidden], .workspace[hidden], .learning-controls[hidden], .supplemental-context[hidden], .model-cancel[hidden] { display: none !important; }
 .settings-view h2, .settings-view h3 { margin: 0; color: #312e81; }
 .settings-view h2 { font-size: 18px; }
 .settings-view h3 { font-size: 14px; }

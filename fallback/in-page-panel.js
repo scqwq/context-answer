@@ -4,7 +4,9 @@
  */
 (function registerInPagePanel(global) {
   let host;
+  let panelRoot;
   let elements;
+  let uiLanguage = "zh";
   let activeRequestId = null;
   let currentPayload = null;
   let requestOptions = null;
@@ -16,6 +18,84 @@
   let activeInstruction = "";
   let viewMode = "home";
   let homeStatus = { text: "已准备就绪", className: "status" };
+
+  function t(key) { return global.ContextAnswerI18n?.t?.(uiLanguage, key) || key; }
+
+  function setLeadingText(element, text) {
+    if (!element) return;
+    const textNode = Array.from(element.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+    if (textNode) textNode.nodeValue = text;
+    else element.prepend(document.createTextNode(text));
+  }
+
+  function setTrailingText(element, text) {
+    if (!element) return;
+    const textNode = Array.from(element.childNodes).reverse().find((node) => node.nodeType === Node.TEXT_NODE);
+    if (textNode) textNode.nodeValue = text;
+    else element.append(document.createTextNode(text));
+  }
+
+  function sourceLanguageLabel(value, fallback) {
+    if (uiLanguage !== "en") return fallback;
+    return ({ auto: "Auto detect", data: "JSON / YAML / XML", markdown: "Markdown", document: "Technical document" })[value] || fallback;
+  }
+
+  // 静态控件由此处集中翻译；模型名称、选区和模型回答保持原样。
+  function applyLanguage() {
+    if (!elements || !panelRoot) return;
+    panelRoot.lang = uiLanguage === "en" ? "en" : "zh-CN";
+    elements.languageToggle.textContent = uiLanguage === "zh" ? "中文 / EN" : "ZH / English";
+    elements.languageToggle.title = uiLanguage === "zh" ? "Switch to English" : "切换到中文";
+    elements.home.textContent = t("home");
+    elements.history.textContent = t("history");
+    elements.diagnostics.textContent = t("log");
+    elements.settings.title = t("settings");
+    elements.settings.setAttribute("aria-label", t("settings"));
+    elements.close.title = t("close");
+    elements.modelSelect.title = t("modelSelectTitle");
+    elements.modeLearning.textContent = t("learning");
+    elements.modeChat.textContent = t("chat");
+    setLeadingText(elements.language.closest("label"), t("language"));
+    setLeadingText(elements.contextMode.closest("label"), t("context"));
+    setLeadingText(elements.contextLines.closest("label"), t("lines"));
+    elements.contextMode.querySelector('option[value="auto"]').textContent = t("automatic");
+    elements.contextMode.querySelector('option[value="manual"]').textContent = t("manual");
+    elements.contextMode.querySelector('option[value="custom"]').textContent = t("custom");
+    const lineLabels = { 0: "selectionOnly", 5: "lines5", 10: "lines10", 20: "lines20" };
+    Object.entries(lineLabels).forEach(([value, key]) => { elements.contextLines.querySelector(`option[value="${value}"]`).textContent = t(key); });
+    elements.supplemental.placeholder = t("supplementalPlaceholder");
+    elements.optionHint.textContent = t("contextHint");
+    elements.input.placeholder = currentMode === "chat" ? t("chatPlaceholder") : t("questionPlaceholder");
+    elements.send.textContent = t("send");
+    elements.stop.textContent = t("stop");
+    elements.learn.textContent = currentMode === "chat" ? t("chatSend") : t("learnAction");
+    panelRoot.querySelector(".settings-heading h2").textContent = t("settingsTitle");
+    panelRoot.querySelector(".settings-heading p").textContent = t("settingsHint");
+    setLeadingText(settingField("setting-panel-mode").closest("label"), t("panelMode"));
+    settingField("setting-panel-mode").querySelector('option[value="in-page"]').textContent = t("panelInPage");
+    settingField("setting-panel-mode").querySelector('option[value="auto"]').textContent = t("panelAuto");
+    settingField("setting-panel-mode").querySelector('option[value="native"]').textContent = t("panelNative");
+    setTrailingText(settingField("setting-assessment").parentElement, ` ${t("assessment")}`);
+    elements.settingsPreferences.textContent = t("savePanel");
+    panelRoot.querySelector(".model-form-heading h3").textContent = t("modelEditTitle");
+    elements.modelNew.textContent = t("newModel");
+    setLeadingText(settingField("setting-provider").closest("label"), t("provider"));
+    setLeadingText(settingField("setting-label").closest("label"), t("name"));
+    setLeadingText(settingField("setting-model").closest("label"), t("model"));
+    setLeadingText(settingField("setting-key").closest("label"), t("apiKey"));
+    setLeadingText(settingField("setting-url").closest("label"), t("apiUrl"));
+    setLeadingText(settingField("setting-endpoint").closest("label"), t("endpoint"));
+    setLeadingText(settingField("setting-bridge").closest("label"), t("bridge"));
+    setLeadingText(settingField("setting-command").closest("label"), t("command"));
+    const providerKeys = { custom: "providerCustom", openai: "providerOpenai", gemini: "providerGemini", claude: "providerClaude", "claude-agent": "providerClaudeAgent", "codex-agent": "providerCodexAgent", "antigravity-agent": "providerAntigravityAgent", "copilot-agent": "providerCopilotAgent" };
+    Object.entries(providerKeys).forEach(([value, key]) => { settingField("setting-provider").querySelector(`option[value="${value}"]`).textContent = t(key); });
+    elements.modelSave.textContent = elements.settingsView.dataset.modelId ? t("saveEdit") : t("addModel");
+    elements.modelCancel.textContent = t("cancelEdit");
+    panelRoot.querySelector(".settings-view > h3").textContent = t("modelList");
+    elements.modelListNote.textContent = t("modelListNote");
+    if (requestOptions) renderOptions(requestOptions);
+    renderModelList(modelChoices);
+  }
 
   function renderAnswer(text) {
     if (global.ContextLensAnswerRenderer) global.ContextLensAnswerRenderer.render(elements.answer, text);
@@ -80,7 +160,7 @@
     settingField("setting-bridge").value = model?.bridgeUrl || "";
     settingField("setting-command").value = model?.commandPath || "";
     elements.settingsView.dataset.modelId = model?.id || "";
-    elements.modelSave.textContent = model ? "保存修改" : "添加模型";
+    elements.modelSave.textContent = model ? t("saveEdit") : t("addModel");
     elements.modelCancel.hidden = !model;
     syncProviderFields();
   }
@@ -113,7 +193,7 @@
     if (!models.length) {
       const empty = document.createElement("p");
       empty.className = "model-list-empty";
-      empty.textContent = "暂无已保存或 .env 预置的额外模型。";
+      empty.textContent = uiLanguage === "en" ? "No saved or .env preset models yet." : "暂无已保存或 .env 预置的额外模型。";
       elements.modelList.appendChild(empty);
       return;
     }
@@ -124,25 +204,25 @@
       const name = document.createElement("strong");
       name.textContent = model.label || model.model || model.provider;
       const detail = document.createElement("small");
-      detail.textContent = `${model.provider}${model.model ? ` · ${model.model}` : ""}${model.readOnly ? " · .env 预置（只读）" : ""}`;
+      detail.textContent = `${model.provider}${model.model ? ` · ${model.model}` : ""}${model.readOnly ? (uiLanguage === "en" ? " · .env preset (read-only)" : " · .env 预置（只读）") : ""}`;
       text.append(name, detail);
       const actions = document.createElement("div");
       actions.className = "model-row-actions";
       if (model.readOnly) {
         const copy = document.createElement("button");
         copy.type = "button";
-        copy.textContent = "复制编辑";
+        copy.textContent = t("copyEdit");
         copy.addEventListener("click", () => populateModelForm({ ...model, id: undefined, label: `${model.label} 副本` }));
         actions.appendChild(copy);
       } else {
         const edit = document.createElement("button");
         edit.type = "button";
-        edit.textContent = "修改";
+        edit.textContent = t("edit");
         edit.addEventListener("click", () => populateModelForm(model));
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "model-remove";
-        remove.textContent = "删除";
+        remove.textContent = t("remove");
         remove.addEventListener("click", () => removeModel(model));
         actions.append(edit, remove);
       }
@@ -157,7 +237,7 @@
     elements.modelSelect.replaceChildren();
     const environment = document.createElement("option");
     environment.value = "";
-    environment.textContent = "环境默认模型（.env）";
+    environment.textContent = t("environment");
     elements.modelSelect.appendChild(environment);
     modelChoices.filter((model) => model.id !== "env-default").forEach((model) => {
       const option = document.createElement("option");
@@ -251,7 +331,8 @@
     shadow.appendChild(stylesheet);
     const panel = document.createElement("section");
     panel.className = "panel";
-    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
+    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="language-toggle header-utility" title="Switch to English">中文 / EN</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
+    panelRoot = panel;
     shadow.appendChild(panel);
     document.documentElement.appendChild(host);
     elements = {
@@ -271,6 +352,7 @@
       modeLearning: panel.querySelector(".mode-learning"),
       modeChat: panel.querySelector(".mode-chat"),
       modelSelect: panel.querySelector(".model-select"),
+      languageToggle: panel.querySelector(".language-toggle"),
       modelSave: panel.querySelector(".model-save"),
       modelCancel: panel.querySelector(".model-cancel"),
       modelNew: panel.querySelector(".model-new"),
@@ -278,12 +360,16 @@
       home: panel.querySelector(".home"),
       history: panel.querySelector(".history"),
       settings: panel.querySelector(".settings"),
+      close: panel.querySelector(".close"),
       diagnostics: panel.querySelector(".diagnostics"),
+      optionHint: panel.querySelector(".option-hint"),
+      settingsPreferences: panel.querySelector(".settings-preferences"),
+      modelListNote: panel.querySelector(".model-list-note"),
       status: panel.querySelector(".status"),
       settingsStatus: panel.querySelector(".settings-status"),
       answer: panel.querySelector(".answer")
     };
-    panel.querySelector(".close").addEventListener("click", () => {
+    elements.close.addEventListener("click", () => {
       if (activeRequestId) void stopRequest();
       host.remove();
     });
@@ -294,6 +380,11 @@
     elements.history.addEventListener("click", showHistory);
     elements.diagnostics.addEventListener("click", showDiagnostics);
     elements.settings.addEventListener("click", showSettings);
+    elements.languageToggle.addEventListener("click", async () => {
+      uiLanguage = await global.ContextAnswerI18n.toggle(uiLanguage);
+      applyLanguage();
+      await loadModels();
+    });
     elements.modeLearning.addEventListener("click", () => setMode("learning"));
     elements.modeChat.addEventListener("click", () => setMode("chat"));
     elements.modelSelect.addEventListener("change", switchModel);
@@ -307,6 +398,11 @@
     elements.modelNew.addEventListener("click", () => populateModelForm(null));
     elements.settingsView.querySelector(".setting-provider").addEventListener("change", syncProviderFields);
     global.ContextAnswerPanelDrag?.attach?.(panel, panel.querySelector(".drag-handle"));
+    global.ContextAnswerI18n?.subscribe?.((language) => {
+      uiLanguage = language;
+      applyLanguage();
+      void loadModels();
+    });
     void loadOptions();
     void loadPanelState();
   }
@@ -327,9 +423,9 @@
     elements.modeChat.classList.toggle("active", !learning);
     elements.learningControls.hidden = !learning;
     elements.context.hidden = !learning && !currentPayload?.contextData?.selectedText;
-    elements.learn.textContent = learning ? "一键学习解释" : "发送消息";
+    elements.learn.textContent = learning ? t("learnAction") : t("chatSend");
     elements.send.hidden = !learning;
-    elements.input.placeholder = learning ? "例如：逐行解释这段代码" : "输入你的问题…";
+    elements.input.placeholder = learning ? t("questionPlaceholder") : t("chatPlaceholder");
     if (viewMode === "home") showHome();
   }
 
@@ -341,7 +437,12 @@
   }
 
   async function loadPanelState() {
-    const stored = await chrome.storage.local.get("contextAnswerConversationMode");
+    const [stored, language] = await Promise.all([
+      chrome.storage.local.get("contextAnswerConversationMode"),
+      global.ContextAnswerI18n?.get?.() || Promise.resolve("zh")
+    ]);
+    uiLanguage = language;
+    applyLanguage();
     currentMode = stored.contextAnswerConversationMode === "chat" ? "chat" : "learning";
     renderMode();
     await loadModels();
@@ -380,7 +481,7 @@
   function renderOptions(options) {
     requestOptions = global.ContextLensLearningOptions.normalize(options);
     elements.language.innerHTML = global.ContextLensLearningOptions.LANGUAGES
-      .map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+      .map(([value, label]) => `<option value="${value}">${sourceLanguageLabel(value, label)}</option>`).join("");
     elements.language.value = requestOptions.sourceLanguage;
     elements.contextMode.value = requestOptions.contextMode;
     elements.contextLines.value = String(requestOptions.manualLines);

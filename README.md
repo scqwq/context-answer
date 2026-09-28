@@ -1,101 +1,97 @@
-# ContextLens / ContextAnswer - 浏览器学习助手
+# ContextLens / ContextAnswer
 
-ContextLens is a Chrome extension that lets you highlight text on any webpage and instantly interact with AI models in a side panel. It automatically captures deep DOM context around your selection (full code blocks, tables, surrounding paragraphs), with optional full-page article content, so the model can respond with accurate, context-rich answers.
+[中文说明](README_ZH.md)
 
-当前推荐界面是网页内的 **ContextAnswer**：它不依赖 `chrome.sidePanel`，因此在多数 Chromium 浏览器中都能展示；可拖动、可切换学习模式/普通聊天，并带有模型选择、设置、历史和调用日志。原生侧边栏仍保留为可选兼容策略。
+ContextLens is a Manifest V3 Chromium extension for learning from webpages. Select code or technical text, then open the unified **ContextAnswer** in-page panel to get a concise explanation, translation, context-aware answer, or continue a normal chat.
 
-It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravity CLI, Copilot CLI). Through the Bridge Server, selected UI text can be sent directly to your local agent, enabling a seamless workflow from "select text -> locate code -> apply changes".
+The default panel is implemented with Shadow DOM rather than `chrome.sidePanel`, so it works in most Chromium-based browsers that allow extension content scripts. The legacy native side panel remains available as an optional compatibility host.
 
-本项目基于ContextLens修改,原项目 https://github.com/cola-sk/context-lens
----
+## Highlights
 
-## Core Features
+- Select text with the floating Lens button or the right-click menu; the extension extracts code blocks, tables, headings, surrounding content, and page metadata.
+- ContextAnswer has **Learning** and **Chat** modes, a draggable title bar, streaming output, stop control, answer history, timing logs, and a shared Chinese/English switch.
+- Learning mode supports language hints and three context strategies: automatic, manual `0 / 5 / 10 / 20` lines, and pasted supplemental context.
+- Automatic context selection uses TypeSafe Jev when configured and falls back to a short LLM JSON assessment. It expands context in `0 → 5 → 10 → 20` steps only when necessary.
+- Add, edit, remove, and select multiple Gemini, OpenAI, Claude, custom OpenAI-compatible API models, or local CLI Agents from the Settings page.
+- Preload up to five additional models in `.env`; use a local Agent Bridge only when calling CLI Agents.
+- Learning memory keeps up to 20 turns for the same normalized selection, injecting a prepared summary plus the latest four turns. Summaries run asynchronously after answers complete.
+- Per-call LLM timelines group assessment, answer, and background memory-summary calls without logging prompts, selections, keys, or answer bodies.
 
-- **Instant highlight trigger**: Select text on a webpage and a Lens button appears right next to the cursor.
-- **Persistent side panel**: Built on Chrome Side Panel API, so conversation context is kept across tab switching.
-- **Smart DOM context extraction**: Automatically detects code blocks (with language hint), tables (formatted as Markdown), heading hierarchy, context windows, semantic path, and image metadata.
-- **Full-page context merge**: Optionally append the full article body (semantic extraction, cleanup, Markdown conversion) for complete background.
-- **Long full-page extraction (50,000 chars)**: Increased the body extraction limit from `6,000` to `50,000`, making long docs and large source files fully usable for translation and summarization.
-- **Right-click model routing (up to 5 pinned models)**: Pin frequently used models in settings, then launch "New Chat" with a specific model directly from right-click submenu.
-- **Instant tooltip for pinned models**: Pure CSS tooltip with scale-pop animation and safe positioning to avoid clipping; pin icons smoothly transition to filled state.
-- **Precise right-click image filtering**: Image parsing now runs only when right-clicking actual image elements (`<img>`, `<picture>`, `<figure>`), avoiding noisy false-positive image capture on normal text/container clicks.
-- **Multi-provider API support**: Connect to Google Gemini, OpenAI, Anthropic Claude, and any OpenAI-compatible custom/local endpoints (Ollama, LM Studio, vLLM, etc.).
-- **Local coding agents**: Via Bridge Server, connect Claude Code, Codex CLI, Antigravity CLI, and Copilot CLI to locate and modify source code from selected UI text.
-- **URL auto-switch rules**: Glob-style domain rule engine for automatic model and working-directory switching by site.
-- **Rule modal editor**: Create and edit URL auto-switch rules in modal forms for cleaner interaction.
-- **Tab-level isolation**: Each tab keeps its own chat history, selection context, and model state.
-- **Real-time streaming output**: All models support SSE streaming; local agents additionally show logs, reasoning, and tool calls.
-- **Interrupt while running**: Send button switches to a red stop button during request execution; click to cancel immediately (before first token or during streaming).
-- **Learning answer history**: The in-page learning panel keeps the latest completed answers after it is closed; use **Home** to return from logs and **View history** to reopen a previous answer.
-- **LLM timing timeline**: Every API/Agent call records its own `t=0`, dispatch, HTTP response, first stream data, first displayable output, end state, and aggregate timing metrics for performance tuning.
-- **Fast Jev context gate**: Optional TypeSafe Jev decision route checks whether the selected context is sufficient before the generative model runs; the existing LLM JSON check remains a fallback.
-- **Unified ContextAnswer panel**: Default in-page Shadow DOM panel works independently of native side panel APIs; its title bar is draggable and its position is restored locally.
-- **Learning / chat modes**: Learning mode provides language hints and `auto` / `manual` / `custom` context strategies; chat mode keeps the current panel's recent 20 turns.
-- **Learning memory**: For a stable selection, retains up to 20 learning turns, injects a compact summary plus the latest 4 turns, and only summarizes old turns asynchronously every 4 new turns.
-- **Per-panel model settings**: In-page settings support adding, editing, deleting, and selecting multiple Gemini, OpenAI, Claude, custom OpenAI-compatible APIs, and optional local CLI Agents; an explicit `.env` configuration remains the default fallback.
-- **Model config modal improvements**: Switching provider automatically resets irrelevant fields; model sync success messages auto-dismiss.
-- **Bilingual UI**: One-click `Chinese / English` switching in the side panel, including static and major dynamic messages.
-- **Glassmorphism UI**: Frosted style with polished transitions, code highlighting, and breathing status indicators.
+## Requirements
 
----
+- A Chromium-based browser that permits unpacked extensions: Chrome, Edge, Lenovo Browser, and similar Chromium browsers.
+- Node.js 18+ and `pnpm` (or a compatible package manager) for generating local runtime configuration.
+- An API key and model endpoint for a remote model, or a compatible local model endpoint.
+- Optional local Agent mode: Node.js plus an installed Claude Code, Codex CLI, Antigravity CLI, or Copilot CLI.
 
-## Installation
+## Quick start
 
-### 1. Install the Chrome extension
+1. Install dependencies:
 
-This project uses Chrome Manifest V3 and is loaded as an unpacked extension:
+   ```powershell
+   pnpm install
+   ```
 
-1. Clone or download this repository.
-2. Open `chrome://extensions/` in Chrome and enable **Developer mode**.
-3. Click **Load unpacked** and select the project root (the folder containing `manifest.json`).
-4. Pin ContextLens in the Chrome toolbar for the best experience.
+2. Copy `.env.example` to `.env`, then configure one default model. For an OpenAI-compatible provider:
 
-### 2. Start Bridge Server (optional, required for local agents)
+   ```env
+   CONTEXTLENS_PANEL_MODE=in-page
+   CONTEXTLENS_API_PROVIDER=custom
+   CONTEXTLENS_API_KEY=your-key
+   CONTEXTLENS_API_URL=https://provider.example/v1
+   CONTEXTLENS_MODEL=your-model
+   ```
 
-If you want to use Claude Code / Codex CLI / Antigravity CLI / Copilot CLI local agents:
+3. Generate the extension-only runtime configuration:
 
-```bash
-cd bridge
-npm install
-node server.js
-```
+   ```powershell
+   pnpm run build:env
+   ```
 
-Bridge Server runs at `http://localhost:3100` by default. The extension will auto-detect local agent availability.
+4. Open your browser extension page, enable Developer mode, choose **Load unpacked**, and select this repository root.
 
----
+5. Select text on a webpage, click the floating Lens icon, and use ContextAnswer. After source, manifest, or `.env` changes, run `pnpm run build:env` when applicable and reload the extension.
 
-## AI Configuration
+## ContextAnswer usage
 
-### ContextAnswer 默认配置（推荐）
+The default `in-page` host opens a draggable panel. Its header contains Home, History, Logs, Settings, Chinese/English, and Close controls.
 
-根目录 `.env` 不会被扩展直接读取。修改后运行：
+- **Learning mode**: select a source language and context strategy, then choose “Explain selection” or ask a focused question.
+- **Chat mode**: ask without a selection; the current panel keeps the latest 20 turns only.
+- **Automatic context**: Jev first, LLM fallback; it stops after 20 lines each side and asks you to paste the missing definition or call site.
+- **Manual context**: `0` sends only the selected text and never invokes Jev/LLM sufficiency assessment.
+- **Add context**: paste remote types, function definitions, callers, or document paragraphs into the supplementary field.
+- **Language**: the `中文 / EN` button shares the `uiLanguage` preference with the legacy native side panel. It translates ContextAnswer controls; response language remains a separate learning setting in `.env`.
 
-```bash
-pnpm run build:env
-```
+## Model management
 
-然后在浏览器扩展管理页点击“重新加载”。基础示例：
+The Home page only contains the active-model selector. Keys, URLs, model form fields, and model lists are deliberately confined to **Settings**.
 
-```env
-CONTEXTLENS_PANEL_MODE=in-page
-CONTEXTLENS_API_PROVIDER=custom
-CONTEXTLENS_API_KEY=你的密钥
-CONTEXTLENS_API_URL=https://provider.example/v1
-CONTEXTLENS_MODEL=your-model
-CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED=true
-```
+- Add a browser-local model with a provider, display name, model name, and the required endpoint/key fields.
+- The saved-model list supports edit and delete. A saved model is selectable from Home after it is added.
+- `.env` models appear as read-only presets. Use **Copy to edit** to create a browser-local editable copy.
+- Choosing “Environment default (.env)” on Home clears the browser-local active model and returns to the default configuration.
 
-`CONTEXTLENS_PANEL_MODE` 可选：`in-page`（默认，统一网页内面板）、`auto`（可用时原生侧边栏）和 `native`（优先原生侧边栏）。主页只显示当前模型的选择器；API Key、URL、模型新增、编辑和删除均只在“设置”页显示。
+### Default model variables
 
-### `.env` 额外预置模型
+| Variable | Purpose |
+| --- | --- |
+| `CONTEXTLENS_API_PROVIDER` | `gemini`, `openai`, `claude`, or `custom` |
+| `CONTEXTLENS_API_KEY` | API key for the default remote model |
+| `CONTEXTLENS_API_URL` | Custom/OpenAI-compatible base URL; `/chat/completions` is appended when no full endpoint is set |
+| `CONTEXTLENS_API_ENDPOINT` | Optional full endpoint; used exactly as written |
+| `CONTEXTLENS_MODEL` | Default model identifier |
+| `CONTEXTLENS_PANEL_MODE` | `in-page` (default), `auto`, or `native` |
 
-除默认模型外，可预置最多 5 个可切换模型。它们在扩展加载时进入主页下拉菜单，也会在设置页的模型列表中以“.env 预置（只读）”显示：
+### Extra `.env` model presets
+
+Use slots `1` through `5` to preload models before opening the extension UI:
 
 ```env
 # provider: gemini | openai | claude | custom | claude-agent | codex-agent | antigravity-agent | copilot-agent
 CONTEXTLENS_EXTRA_MODEL_1_NAME=DeepSeek Flash
 CONTEXTLENS_EXTRA_MODEL_1_PROVIDER=custom
-CONTEXTLENS_EXTRA_MODEL_1_API_KEY=你的密钥
+CONTEXTLENS_EXTRA_MODEL_1_API_KEY=your-key
 CONTEXTLENS_EXTRA_MODEL_1_API_URL=https://provider.example/v1
 CONTEXTLENS_EXTRA_MODEL_1_API_ENDPOINT=
 CONTEXTLENS_EXTRA_MODEL_1_MODEL=deepseek-flash
@@ -103,218 +99,78 @@ CONTEXTLENS_EXTRA_MODEL_1_BRIDGE_URL=
 CONTEXTLENS_EXTRA_MODEL_1_COMMAND_PATH=
 ```
 
-将编号改为 `2` 至 `5` 可增加更多预置模型。预置项必须直接修改 `.env` 并执行 `pnpm run build:env` 后重新加载扩展；若想在网页内改参数，可在设置列表点击“复制编辑”，生成独立的可编辑浏览器内模型。
+Copy the group and change the index to `2`, `3`, `4`, or `5`. Empty or incomplete slots are ignored. After editing `.env`, run `pnpm run build:env` and reload the extension. Presets are never copied to browser-local model storage.
 
-学习模式的上下文策略：
+### Learning and assessment variables
 
-- `自动选择`：Jev 优先、LLM 回退判断选区是否足够；不足时逐步读取上下各 5、10、20 行。
-- `手动选择`：选择 0、5、10 或 20 行；0 行只发送选区，不调用充分性判断。
-- `自行添加`：输入框会出现，可粘贴远处的类型定义、调用位置或文档段落；它会作为明确标记的补充资料发送。
+| Variable | Purpose |
+| --- | --- |
+| `CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE` | Default answer language, such as `zh-CN` |
+| `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | Whether learning answers include translation when useful |
+| `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto`, `manual`, or `custom` default |
+| `CONTEXTLENS_LEARNING_MANUAL_LINES` | `0`, `5`, `10`, or `20` |
+| `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | Allows automatic Jev/LLM sufficiency assessment |
+| `CONTEXTLENS_JEV_ENABLED` | Enables the TypeSafe Jev primary assessment route |
+| `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | Enables LLM JSON fallback assessment |
+| `CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS` | Total learning workflow timeout, default `90000` |
+| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | Per-assessment timeout, default `15000` |
 
-普通聊天不需要选区，保留当前打开面板的最近 20 轮。学习记忆则以“页面来源 + 语言 + 规范化选区”的哈希分组保存；最多保留 20 轮完整问答，并仅将摘要和最近 4 轮附给下一次同选区追问。摘要在回答完成后后台执行，不影响本轮首字或完成时间。
+When both Jev and LLM assessment are disabled, automatic context mode answers from the selection only and clearly reports that no sufficiency decision ran.
 
-若要将 `.env` 默认模型设为本地 Agent（需要先启动 Bridge），可配置：
+### Local API models and local Agents
 
-```env
-CONTEXTLENS_USE_LOCAL_AGENT=true
-CONTEXTLENS_LOCAL_AGENT_PROVIDER=codex-agent
-CONTEXTLENS_LOCAL_AGENT_COMMAND_PATH=
-CONTEXTLENS_BRIDGE_URL=http://localhost:3100
+`CONTEXTLENS_USE_LOCAL_MODEL=true` selects `CONTEXTLENS_LOCAL_API_*` variables for an Ollama, LM Studio, vLLM, or other compatible endpoint.
+
+Local CLI Agents are different: set `CONTEXTLENS_USE_LOCAL_AGENT=true`, choose a `CONTEXTLENS_LOCAL_AGENT_PROVIDER`, and start the Bridge:
+
+```powershell
+pnpm run bridge
 ```
 
-可用提供商是 `claude-agent`、`codex-agent`、`antigravity-agent`、`copilot-agent`。当它与 `CONTEXTLENS_USE_LOCAL_MODEL=true` 同时开启时，Agent 优先；本地 Agent 不参与短 JSON 的上下文充分性评估，以免额外启动一次 CLI。
+`CONTEXTLENS_BRIDGE_URL` defaults to `http://localhost:3100`. It is required only for `*-agent` providers; regular Gemini, OpenAI, Claude, and compatible API models do not use it. If both local API and local Agent flags are enabled, the Agent has priority. Local Agents skip short context-assessment calls to avoid launching an extra CLI process.
 
-### 既有原生侧边栏配置
+## Existing capabilities and architecture
 
-1. Click the **Settings (gear)** button at the top of the side panel.
-2. In **Basic Config**, manage models:
-   - **Local agents**: Auto-detect installed CLI agents (Claude Code, Codex, Antigravity, Copilot), including availability and version. Click **Refresh Agents** to re-scan.
-   - **API models**: Click **+ Add API Model** in model cards, choose provider (Gemini / OpenAI / Claude / Custom), and enter API key + model name. Custom API supports one-click model list sync.
-   - **Form behavior**: When switching providers in the modal, non-applicable fields are automatically cleared/reset. Sync success message auto-hides after a short delay.
-3. In **Auto-Switch Rules**, configure URL rules:
-   - Create/edit rules with **Add Rule** or **Edit** on a rule card.
-   - Fill name, URL pattern (`*` wildcard supported), target model, and CWD (for local agents).
-   - Rules support priority sorting and enable/disable toggles.
-4. Click **Save Configuration**. A green status indicator at the bottom means configuration is successful.
-
----
-
-## Usage
-
-![ContextLens Main UI](referrence/main_en.png)
-
-### Method 1: Floating Lens button (recommended)
-
-1. Highlight text on any webpage.
-2. Click the floating `Lens` button near the selection to open ContextAnswer with extracted DOM context.
-3. In learning mode, choose a language and a context strategy; or switch to ordinary chat below the title.
-4. Use **Settings** to switch model / provider, **History** to review completed learning answers, and **Log** to inspect grouped LLM timing.
-
-![ContextLens Highlight Interaction](referrence/case1_en.png)
-
-### Method 2: Right-click context menu
-
-1. Select text on webpage (or right-click an element, including images and buttons).
-2. Choose **Ask ContextLens** from context menu.
-3. **Direct model routing from right-click menu**: If models are pinned in settings, right-click menu exposes a submenu for direct model selection, and starts a new chat with that temporary model.
-
-![ContextLens Right-click Routing](referrence/case2_en.png)
-
-### Local Agent mode
-
-1. Ensure Bridge Server is running and at least one CLI agent is installed.
-2. Select a local agent model in settings, or switch via URL rules.
-3. Select UI text on webpage; ContextLens builds a code-location prompt template automatically.
-4. Side panel renders agent output in three cards: **Input Context** -> **Execution Logs** (reasoning + tool calls) -> **Execution Result**.
-
-![ContextLens Local Agent Workflow](referrence/case3_en.png)
-
-#### Typical workflow: Apply web article ideas to local project
-
-When reading a technical article, you can directly apply a code idea or fix into your local repository with ContextLens:
-
-1. **Select web content**: Highlight relevant code or explanation in the article and click the floating `Lens` button.
-2. **Attach full-article background (optional)**: Enable full-page context in side panel for richer background.
-3. **Send a concrete coding instruction**: Example: "Refactor a method in `utils.js` in my local project based on this web logic."
-4. **Auto-locate and patch code**: Local agent combines selection content, full-page content, and local workspace context to locate and update source files.
-
-![Web Context + Local Project Integration](referrence/case4_en.png)
-
-### Quick model switching
-
-Click the status indicator at the bottom of side panel to open quick model panel:
-
-- **Temporary Switch**: Temporary model switch for current tab only.
-- **Create Domain Rule**: Quickly create auto-switch rule based on current page URL.
-
-### UI language switching
-
-Click the language button at the top-right corner of side panel to switch between `Chinese / English`. The preference is persisted and auto-restored.
-
----
-
-## Project Structure
+The project retains ContextLens’s original capabilities: right-click entry points, code/table/heading extraction, optional full-page reference in the legacy native panel, native side-panel conversations, URL model rules, and local Agent Bridge support.
 
 ```text
-ContextLens/
-  manifest.json            # Chrome extension config (MV3)
-  background.js            # Service Worker: side panel lifecycle, context menu, session routing
-  content.js               # Content script: text selection, DOM extraction, floating button
-  content.css              # Floating button styles
-  sidepanel/
-    sidepanel.html         # Side panel layout
-    sidepanel.css          # Glassmorphism style system
-    sidepanel.js           # Core logic: streaming interactions, rule engine, state persistence
-  bridge/
-    package.json           # Bridge Server config
-    server.js              # Node bridge: agent detection, CLI dispatch, SSE forwarding
-  shared/
-    llm-timeline.js        # Privacy-safe per-call LLM timing timeline
-  icons/                   # Extension icon set
-  referrence/              # Product screenshots
+selection / right-click
+  -> content.js extracts contextData
+  -> background/panel-capabilities.js selects in-page or native host
+  -> fallback/in-page-panel.js renders ContextAnswer by default
+  -> background/fallback-chat.js orchestrates assessment and SSE answer streaming
+  -> shared/learning-memory.js persists scoped learning memory after completion
 ```
 
----
+Important directories:
 
-## Technical Details
+| Path | Responsibility |
+| --- | --- |
+| `content.js` | Selection, context-menu element, DOM and context-window extraction |
+| `background.js` | Browser message routing and panel lifecycle |
+| `background/fallback-chat.js` | In-page API/Agent streaming, cancellation, assessment, and memory-summary calls |
+| `fallback/` | Shadow DOM ContextAnswer UI, renderer, drag behavior, and i18n |
+| `shared/` | Prompts, options, models, preferences, history, memory, diagnostics, and timelines |
+| `sidepanel/` | Existing native side-panel implementation and generated local configuration |
+| `bridge/` | Optional local Node Agent Bridge |
 
-### DOM context extraction
+## Privacy and diagnostics
 
-`content.js` extracts the following structured context around selected content:
+- `.env` and generated `sidepanel/config.local.js` are ignored by Git. Never commit keys.
+- Browser-added models are saved in `chrome.storage.local`; they can contain keys and must not be exported casually.
+- LLM timeline and diagnostic storage never retains keys, URLs, prompts, selections, headers, answer text, or reasoning content.
+- User-visible answer history and learning memory intentionally retain bounded answer text in separate storage keys; they are never mixed into logs.
+- In-page panels cannot run on browser internal pages, extension stores, or pages where content scripts are blocked.
 
-| Context Type | Extraction Logic |
-|---|---|
-| Code Block | Walk up to `<pre>/<code>`, capture full content, detect language from `language-*` class |
-| Table | Find parent `<table>` and convert to Markdown table |
-| Heading | Scan previous `h1-h6` to determine section title |
-| Text Window | Sliding window of 800 chars before and after selection |
-| Images | Up to 5 images in selection (alt, dimensions, src) |
-| Semantic Path | CSS breadcrumb like `main > article > section#content > p` |
-| Full-page Body | Semantic main-content extraction (<= 50000 chars), cleanup + Markdown conversion |
-| Meta | `<meta description>` and `og:description` |
+## Development checks
 
-### Bridge Server agent orchestration
-
-| Agent | CLI Command | Output Format |
-|---|---|---|
-| Claude Code | `claude -p <prompt> --output-format=stream-json` | Stream JSON (`assistant` / `tool_use` / `result`) |
-| Codex CLI | `codex exec --json -C <dir> <prompt>` | JSON (`agent_message` / `function_call` / `function_result`) |
-| Antigravity CLI | `agy --output-format=stream-json -p <prompt>` | Stream JSON (`content` / `reasoning` / `tool_call`) |
-| Copilot CLI | `copilot --output-format json --stream on -p <prompt>` | JSON stream (`assistant.message_*` / `tool.execution_start` / `tool.execution_complete`) |
-
-### URL rule engine
-
-Rule matching uses glob patterns, with specificity scoring and manual ordering:
-
-1. **Temporary switch** (highest priority) - current tab only.
-2. **URL rules** - matched in order, with more specific patterns preferred.
-3. **Default model** - fallback when no rule matches.
-
-### Streaming output parsing
-
-All API endpoints use SSE streaming. Local agents also parse these event types:
-
-- `assistant / agent_message / content` -> rendered as text
-- `thinking / reasoning` -> rendered as collapsible reasoning blocks
-- `tool_use / tool_call / function_call / tool.execution_start` -> rendered as system logs (with params)
-- `tool_result / function_result / command_execution / tool.execution_complete` -> rendered as system logs (with output)
-- `error` -> rendered as error alerts
-
-### LLM 调用时间线与性能排查
-
-为便于优化自动上下文评估和流式回答的耗时，扩展会将每一次实际模型调用作为一条独立时间线保存，并以一次用户提问为“请求链”归组。自动上下文的 Jev 判断、LLM 回退判断和最终回答会显示在同一个请求链边界内，而不是混在相邻问题之间。
-
-- 网页内学习面板：点击右上角“日志”，查看最近 15 条请求链。
-- 原生侧边栏：点击顶部波形图标，查看最近 15 条请求链。
-- 每条记录包含绝对开始时间 `startedAt` 与相对时间 `t+…ms`：请求创建、发出 HTTP 请求、收到 HTTP 响应、收到首个流式数据、解析到首段输出、完成/取消/超时/失败。
-- `firstResponseMs` 用于判断 HTTP 开始响应的速度，`firstStreamDataMs` 表示首个流数据，`firstOutputMs` 表示何时真的能向用户显示内容；总耗时、流数据块数和字节数可用于比较模型、网络或提示词策略。
-
-日志保存在扩展的 `chrome.storage.local` 键 `contextLensLlmTimelines`，最多保留最近 60 次调用，并不写入项目目录或本机文本文件。这种方式适合 Manifest V3 的 Service Worker 生命周期，也不会要求扩展获得本机文件写入权限。
-
-出于隐私考虑，时间线不会记录 API Key、请求 URL、请求头、选区、提示词、模型回答正文或思维链。“响应内容”仅以安全的事件类型和大小指标表示，例如 `HTTP 200`、`assessment-response`、`first-output`、输出字符数。
-
-### ContextAnswer 设置与本地存储
-
-- `contextAnswerPanelPreferences`：面板策略与自动上下文判断开关。
-- `contextAnswerModels` / `contextAnswerActiveModelId`：用户在网页内“设置”添加的可编辑模型与当前选择；其中可能含 API Key，因此仅保存在本机 `chrome.storage.local`，不要导出或提交。`.env` 额外预置模型不复制到该键。
-- `contextAnswerLearningMemory`：用户主动获得的学习记忆，最多 8 个选区范围、每个范围 20 轮；它和“历史”一样可保存回答正文，但不会进入性能日志或诊断日志。
-- `contextLensLlmTimelines`：性能时间线，仅保存耗时、状态和大小指标，不保存正文。
-
-### 学习回答历史与主页
-
-学习模式的最终回答默认使用 SSE 流式显示；自动上下文的充分性判断是非流式短请求，因此不需要新增 `.env` 流式开关。原生侧边栏沿用既有的会话历史；网页内学习面板新增右上角 **查看历史** 和 **主页**：前者读取已完成回答，后者从“日志”或历史详情返回当前回答。
-
-网页内历史保存于独立的 `chrome.storage.local` 键 `contextLensLearningAnswerHistory`，最多 30 条。为控制本地容量，单条问题最多保存 1,200 个字符、回答最多保存 16,000 个字符；不保存选区、页面 URL、API Key、请求头，也不会把回答写进性能日志。这里使用浏览器扩展自带存储，而不是 SQLite：无需本机数据库、原生消息服务或后端进程，且能在关闭面板后继续保留数据。
-
-### 学习模式的手动上下文
-
-在“手动选择”模式下，可选上下各 `0 / 5 / 10 / 20` 行。`0 行（仅选区）` 不会发起上下文充分性评估，不调用 Jev 或 LLM 判断，也不会额外向网页读取前后内容；只把最小选区交给最终回答模型，适合已经完整的单行代码、短定义或希望控制发送内容的场景。
-
-### Jev 优先的自动上下文判断
-
-自动模式支持两条可独立开关的判断路线：Jev 是主路线，既有生成式 LLM JSON 判断是回退路线。Jev 使用 TypeSafe 的 System One API，发送 `state` 与两道 `choice` 问题：当前内容是否足够回答、若不足应优先读取前文/后文/两侧。只有 `sufficient` 或 `insufficient` 的置信度达到阈值时才会生效；低置信度、网络异常或未完成配置时会回退到 LLM。
-
-```env
-CONTEXTLENS_JEV_ENABLED=true
-CONTEXTLENS_JEV_API_KEY=请填入你的 TypeSafe Key
-CONTEXTLENS_JEV_API_URL=https://api.typesafe.ai/v1/systemone
-CONTEXTLENS_JEV_MODEL=jev-latest
-CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD=0.75
-CONTEXTLENS_LLM_ASSESSMENT_ENABLED=true
+```powershell
+pnpm run check
+pnpm run build:env
 ```
 
-Jev 不是 OpenAI 兼容聊天接口，不能配置到 `CONTEXTLENS_API_URL` 中；它的完整协议由 `background/jev-assessment.js` 独立处理。将两条开关同时设为 `false` 后，自动模式会明确提示“仅使用当前选区”，并跳过上下文判断和扩展，最终解释仍由你配置的正常 API 模型完成。
+Use `AGENTS.md` for detailed module contracts, persistence boundaries, and future-maintenance rules.
 
----
+## Origin and license
 
-## Security and Privacy
-
-- API keys are stored in `chrome.storage.local` only.
-- Bridge Server runs locally at `localhost:3100` and is not exposed publicly.
-- API requests are sent directly to model endpoints; ContextLens does not proxy your data through intermediate servers.
-
----
-
-## License
-
-MIT
+This project is based on [cola-sk/context-lens](https://github.com/cola-sk/context-lens). License: MIT.

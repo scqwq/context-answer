@@ -291,7 +291,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
-              files: ["shared/panel-preferences.js", "shared/context-answer-models.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-history.js", "shared/llm-timeline-view.js", "fallback/panel-drag.js", "fallback/answer-renderer.js", "fallback/in-page-panel.js", "content.js"]
+              files: ["shared/panel-preferences.js", "shared/context-answer-models.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-history.js", "shared/llm-timeline-view.js", "fallback/panel-drag.js", "fallback/in-page-i18n.js", "fallback/answer-renderer.js", "fallback/in-page-panel.js", "content.js"]
             });
             await chrome.scripting.insertCSS({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
