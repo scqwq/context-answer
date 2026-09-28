@@ -1,6 +1,8 @@
-# ContextLens - Smart AI Side Panel Chrome Extension
+# ContextLens / ContextAnswer - 浏览器学习助手
 
 ContextLens is a Chrome extension that lets you highlight text on any webpage and instantly interact with AI models in a side panel. It automatically captures deep DOM context around your selection (full code blocks, tables, surrounding paragraphs), with optional full-page article content, so the model can respond with accurate, context-rich answers.
+
+当前推荐界面是网页内的 **ContextAnswer**：它不依赖 `chrome.sidePanel`，因此在多数 Chromium 浏览器中都能展示；可拖动、可切换学习模式/普通聊天，并带有模型选择、设置、历史和调用日志。原生侧边栏仍保留为可选兼容策略。
 
 It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravity CLI, Copilot CLI). Through the Bridge Server, selected UI text can be sent directly to your local agent, enabling a seamless workflow from "select text -> locate code -> apply changes".
 
@@ -27,6 +29,10 @@ It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravit
 - **Learning answer history**: The in-page learning panel keeps the latest completed answers after it is closed; use **Home** to return from logs and **View history** to reopen a previous answer.
 - **LLM timing timeline**: Every API/Agent call records its own `t=0`, dispatch, HTTP response, first stream data, first displayable output, end state, and aggregate timing metrics for performance tuning.
 - **Fast Jev context gate**: Optional TypeSafe Jev decision route checks whether the selected context is sufficient before the generative model runs; the existing LLM JSON check remains a fallback.
+- **Unified ContextAnswer panel**: Default in-page Shadow DOM panel works independently of native side panel APIs; its title bar is draggable and its position is restored locally.
+- **Learning / chat modes**: Learning mode provides language hints and `auto` / `manual` / `custom` context strategies; chat mode keeps the current panel's recent 20 turns.
+- **Learning memory**: For a stable selection, retains up to 20 learning turns, injects a compact summary plus the latest 4 turns, and only summarizes old turns asynchronously every 4 new turns.
+- **Per-panel model settings**: In-page settings support adding, editing, deleting, and selecting multiple Gemini, OpenAI, Claude, custom OpenAI-compatible APIs, and optional local CLI Agents; an explicit `.env` configuration remains the default fallback.
 - **Model config modal improvements**: Switching provider automatically resets irrelevant fields; model sync success messages auto-dismiss.
 - **Bilingual UI**: One-click `Chinese / English` switching in the side panel, including static and major dynamic messages.
 - **Glassmorphism UI**: Frosted style with polished transitions, code highlighting, and breathing status indicators.
@@ -60,6 +66,66 @@ Bridge Server runs at `http://localhost:3100` by default. The extension will aut
 
 ## AI Configuration
 
+### ContextAnswer 默认配置（推荐）
+
+根目录 `.env` 不会被扩展直接读取。修改后运行：
+
+```bash
+pnpm run build:env
+```
+
+然后在浏览器扩展管理页点击“重新加载”。基础示例：
+
+```env
+CONTEXTLENS_PANEL_MODE=in-page
+CONTEXTLENS_API_PROVIDER=custom
+CONTEXTLENS_API_KEY=你的密钥
+CONTEXTLENS_API_URL=https://provider.example/v1
+CONTEXTLENS_MODEL=your-model
+CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED=true
+```
+
+`CONTEXTLENS_PANEL_MODE` 可选：`in-page`（默认，统一网页内面板）、`auto`（可用时原生侧边栏）和 `native`（优先原生侧边栏）。主页只显示当前模型的选择器；API Key、URL、模型新增、编辑和删除均只在“设置”页显示。
+
+### `.env` 额外预置模型
+
+除默认模型外，可预置最多 5 个可切换模型。它们在扩展加载时进入主页下拉菜单，也会在设置页的模型列表中以“.env 预置（只读）”显示：
+
+```env
+# provider: gemini | openai | claude | custom | claude-agent | codex-agent | antigravity-agent | copilot-agent
+CONTEXTLENS_EXTRA_MODEL_1_NAME=DeepSeek Flash
+CONTEXTLENS_EXTRA_MODEL_1_PROVIDER=custom
+CONTEXTLENS_EXTRA_MODEL_1_API_KEY=你的密钥
+CONTEXTLENS_EXTRA_MODEL_1_API_URL=https://provider.example/v1
+CONTEXTLENS_EXTRA_MODEL_1_API_ENDPOINT=
+CONTEXTLENS_EXTRA_MODEL_1_MODEL=deepseek-flash
+CONTEXTLENS_EXTRA_MODEL_1_BRIDGE_URL=
+CONTEXTLENS_EXTRA_MODEL_1_COMMAND_PATH=
+```
+
+将编号改为 `2` 至 `5` 可增加更多预置模型。预置项必须直接修改 `.env` 并执行 `pnpm run build:env` 后重新加载扩展；若想在网页内改参数，可在设置列表点击“复制编辑”，生成独立的可编辑浏览器内模型。
+
+学习模式的上下文策略：
+
+- `自动选择`：Jev 优先、LLM 回退判断选区是否足够；不足时逐步读取上下各 5、10、20 行。
+- `手动选择`：选择 0、5、10 或 20 行；0 行只发送选区，不调用充分性判断。
+- `自行添加`：输入框会出现，可粘贴远处的类型定义、调用位置或文档段落；它会作为明确标记的补充资料发送。
+
+普通聊天不需要选区，保留当前打开面板的最近 20 轮。学习记忆则以“页面来源 + 语言 + 规范化选区”的哈希分组保存；最多保留 20 轮完整问答，并仅将摘要和最近 4 轮附给下一次同选区追问。摘要在回答完成后后台执行，不影响本轮首字或完成时间。
+
+若要将 `.env` 默认模型设为本地 Agent（需要先启动 Bridge），可配置：
+
+```env
+CONTEXTLENS_USE_LOCAL_AGENT=true
+CONTEXTLENS_LOCAL_AGENT_PROVIDER=codex-agent
+CONTEXTLENS_LOCAL_AGENT_COMMAND_PATH=
+CONTEXTLENS_BRIDGE_URL=http://localhost:3100
+```
+
+可用提供商是 `claude-agent`、`codex-agent`、`antigravity-agent`、`copilot-agent`。当它与 `CONTEXTLENS_USE_LOCAL_MODEL=true` 同时开启时，Agent 优先；本地 Agent 不参与短 JSON 的上下文充分性评估，以免额外启动一次 CLI。
+
+### 既有原生侧边栏配置
+
 1. Click the **Settings (gear)** button at the top of the side panel.
 2. In **Basic Config**, manage models:
    - **Local agents**: Auto-detect installed CLI agents (Claude Code, Codex, Antigravity, Copilot), including availability and version. Click **Refresh Agents** to re-scan.
@@ -80,9 +146,9 @@ Bridge Server runs at `http://localhost:3100` by default. The extension will aut
 ### Method 1: Floating Lens button (recommended)
 
 1. Highlight text on any webpage.
-2. Click the floating `Lens` button near the selection to open side panel with extracted DOM context.
-3. Optionally enable full-page context.
-4. Enter your request and press Enter to send.
+2. Click the floating `Lens` button near the selection to open ContextAnswer with extracted DOM context.
+3. In learning mode, choose a language and a context strategy; or switch to ordinary chat below the title.
+4. Use **Settings** to switch model / provider, **History** to review completed learning answers, and **Log** to inspect grouped LLM timing.
 
 ![ContextLens Highlight Interaction](referrence/case1_en.png)
 
@@ -206,6 +272,13 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 日志保存在扩展的 `chrome.storage.local` 键 `contextLensLlmTimelines`，最多保留最近 60 次调用，并不写入项目目录或本机文本文件。这种方式适合 Manifest V3 的 Service Worker 生命周期，也不会要求扩展获得本机文件写入权限。
 
 出于隐私考虑，时间线不会记录 API Key、请求 URL、请求头、选区、提示词、模型回答正文或思维链。“响应内容”仅以安全的事件类型和大小指标表示，例如 `HTTP 200`、`assessment-response`、`first-output`、输出字符数。
+
+### ContextAnswer 设置与本地存储
+
+- `contextAnswerPanelPreferences`：面板策略与自动上下文判断开关。
+- `contextAnswerModels` / `contextAnswerActiveModelId`：用户在网页内“设置”添加的可编辑模型与当前选择；其中可能含 API Key，因此仅保存在本机 `chrome.storage.local`，不要导出或提交。`.env` 额外预置模型不复制到该键。
+- `contextAnswerLearningMemory`：用户主动获得的学习记忆，最多 8 个选区范围、每个范围 20 轮；它和“历史”一样可保存回答正文，但不会进入性能日志或诊断日志。
+- `contextLensLlmTimelines`：性能时间线，仅保存耗时、状态和大小指标，不保存正文。
 
 ### 学习回答历史与主页
 

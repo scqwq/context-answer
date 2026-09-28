@@ -9,7 +9,7 @@
     ["swift", "Swift"], ["sql", "SQL"], ["shell", "Shell / PowerShell"],
     ["data", "JSON / YAML / XML"], ["markdown", "Markdown"], ["document", "普通技术文档"]
   ];
-  const CONTEXT_MODES = new Set(["auto", "manual"]);
+  const CONTEXT_MODES = new Set(["auto", "manual", "custom"]);
   const DETAIL_LEVELS = new Set(["compact", "normal"]);
 
   function runtimeDefaults() {
@@ -29,6 +29,7 @@
       sourceLanguage,
       contextMode,
       manualLines,
+      supplementalContext: String(raw.supplementalContext || "").trim().slice(0, 12000),
       translationEnabled: raw.translationEnabled ?? defaults.translationEnabled ?? true,
       responseLanguage: String(raw.responseLanguage || defaults.responseLanguage || defaults.targetLanguage || "zh-CN"),
       translationLanguage: String(raw.translationLanguage || defaults.translationLanguage || defaults.targetLanguage || "zh-CN"),

@@ -18,6 +18,13 @@
 
   async function prepare({ context, question, options, assess, expand, onProgress = () => {} }) {
     if (!context?.selectedText) return { status: "ready", context };
+    if (options.contextMode === "custom") {
+      return {
+        status: "ready",
+        context: { ...minimalContext(context), userSupplement: String(options.supplementalContext || "").trim() },
+        assessment: { skipped: true, reason: "自行添加模式仅使用选区和用户补充资料。" }
+      };
+    }
     if (options.contextMode === "manual") {
       if (Number(options.manualLines) === 0) {
         onProgress("手动模式：仅使用当前选区，不读取额外上下文。");
@@ -28,6 +35,13 @@
     }
 
     let working = minimalContext(context);
+    if (options.contextAssessmentEnabled === false) {
+      return {
+        status: "ready",
+        context: working,
+        assessment: { disabled: true, reason: "自动上下文评估已关闭，正在仅使用当前选区回答。" }
+      };
+    }
     for (let index = 0; index < AUTO_STEPS.length; index += 1) {
       const radius = AUTO_STEPS[index];
       onProgress(radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…`);

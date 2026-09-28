@@ -1,7 +1,7 @@
 // Background Service Worker for ContextLens
 // 先加载独立能力路由与网页内面板的流式客户端；本地 .env 生成文件缺失时安全回退。
 try { importScripts("sidepanel/config.local.js"); } catch (error) { console.warn("[ContextLens] 未生成本地环境配置：", error.message); }
-importScripts("sidepanel/config.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/context-assessment.js", "shared/context-orchestrator.js", "shared/request-diagnostics.js", "shared/llm-timeline.js", "background/jev-assessment.js", "background/context-assessment-router.js", "background/panel-capabilities.js", "background/fallback-chat.js");
+importScripts("sidepanel/config.js", "shared/panel-preferences.js", "shared/context-answer-models.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-memory.js", "shared/context-assessment.js", "shared/context-orchestrator.js", "shared/request-diagnostics.js", "shared/llm-timeline.js", "background/jev-assessment.js", "background/context-assessment-router.js", "background/panel-capabilities.js", "background/fallback-chat.js");
 
 // Track which tabs have side panel active
 let activeSidePanelTabs = new Set();
@@ -137,8 +137,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
-function enableSidePanelForTab(tabId, { silent = false } = {}) {
-  if (!tabId || !ContextLensPanelCapabilities.supportsNativeSidePanel()) return Promise.resolve(false);
+async function enableSidePanelForTab(tabId, { silent = false } = {}) {
+  if (!tabId || !(await ContextLensPanelCapabilities.shouldUseNativePanel())) return false;
   activeSidePanelTabs.add(tabId);
   return ContextLensPanelCapabilities.prepareNativePanel(tabId).catch((err) => {
     if (!silent) {
@@ -209,14 +209,14 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 // Handle Context Menu clicks
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const isTargetMenu = info.menuItemId === "ask-contextlens" || 
                        info.menuItemId === "ask-contextlens-default" || 
                        info.menuItemId.startsWith("ask-contextlens-model-");
                        
   if (isTargetMenu) {
     // 原生侧栏需在用户手势期间打开；网页内回退面板则等待完整选区上下文。
-    if (ContextLensPanelCapabilities.supportsNativeSidePanel()) {
+    if (await ContextLensPanelCapabilities.shouldUseNativePanel()) {
       ContextLensPanelCapabilities.open(tab.id, null).catch((err) => {
         console.error("🔮 [ContextLens Background] Failed to open native panel on context menu click:", err);
       });
@@ -291,7 +291,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
-              files: ["shared/learning-prompt.js", "fallback/in-page-panel.js", "content.js"]
+              files: ["shared/panel-preferences.js", "shared/context-answer-models.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-history.js", "shared/llm-timeline-view.js", "fallback/panel-drag.js", "fallback/answer-renderer.js", "fallback/in-page-panel.js", "content.js"]
             });
             await chrome.scripting.insertCSS({
               target: { tabId: tab.id, frameIds: [targetFrameId] },
@@ -355,7 +355,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       await chrome.storage.session.set({
         lastSelection: selectionPayload
       });
-      if (!ContextLensPanelCapabilities.supportsNativeSidePanel()) {
+      if (!(await ContextLensPanelCapabilities.shouldUseNativePanel())) {
         await ContextLensPanelCapabilities.openInPagePanel(tab.id, selectionPayload);
       }
     })();
@@ -390,7 +390,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       requestId: message.requestId,
       payload: message.payload,
       instruction: message.instruction,
-      requestOptions: message.requestOptions
+      requestOptions: message.requestOptions,
+      mode: message.mode,
+      conversation: message.conversation
     }).catch(async (error) => {
       await ContextLensRequestDiagnostics.record({
         surface: "in-page-panel",
@@ -440,6 +442,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_LEARNING_OPTIONS") {
     ContextLensLearningOptions.get()
       .then((options) => sendResponse({ success: true, options }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "GET_PANEL_PREFERENCES") {
+    ContextAnswerPanelPreferences.get()
+      .then((preferences) => sendResponse({ success: true, preferences }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "GET_CONTEXT_ANSWER_MODELS") {
+    Promise.all([ContextAnswerModels.list(), ContextAnswerModels.active()])
+      .then(([models, activeModel]) => sendResponse({ success: true, models, activeModel }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "SAVE_CONTEXT_ANSWER_MODEL") {
+    ContextAnswerModels.save(message.model || {}, { activate: message.activate === true })
+      .then((model) => sendResponse({ success: true, model }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "REMOVE_CONTEXT_ANSWER_MODEL") {
+    ContextAnswerModels.remove(String(message.id || ""))
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "SET_CONTEXT_ANSWER_ACTIVE_MODEL") {
+    ContextAnswerModels.setActive(String(message.id || ""))
+      .then((model) => sendResponse({ success: true, model }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "CLEAR_CONTEXT_ANSWER_ACTIVE_MODEL") {
+    ContextAnswerModels.clearActive()
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "SET_PANEL_PREFERENCES") {
+    ContextAnswerPanelPreferences.set(message.preferences || {})
+      .then(async (preferences) => {
+        await ContextLensPanelCapabilities.disableNativeByDefault();
+        sendResponse({ success: true, preferences });
+      })
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }

@@ -9,6 +9,16 @@
     typeof chrome.sidePanel.open === "function"
   );
 
+  async function getPanelMode() {
+    const preferences = await global.ContextAnswerPanelPreferences?.get?.().catch(() => null);
+    return preferences?.panelMode || global.ContextLensRuntimeConfig?.getDefaults?.().panelMode || "in-page";
+  }
+
+  async function shouldUseNativePanel() {
+    const mode = await getPanelMode();
+    return mode !== "in-page" && supportsNativeSidePanel();
+  }
+
   async function prepareNativePanel(tabId) {
     if (!supportsNativeSidePanel()) return false;
     await chrome.sidePanel.setOptions({ tabId, path: "sidepanel/sidepanel.html", enabled: true });
@@ -27,7 +37,7 @@
   }
 
   async function open(tabId, payload) {
-    if (supportsNativeSidePanel()) {
+    if (await shouldUseNativePanel()) {
       try {
         return await openNativePanel(tabId);
       } catch (error) {
@@ -38,7 +48,7 @@
   }
 
   async function disableNativeByDefault() {
-    if (!supportsNativeSidePanel()) return;
+    if (!supportsNativeSidePanel() || await shouldUseNativePanel()) return;
     try {
       await chrome.sidePanel.setOptions({ enabled: false });
     } catch (error) {
@@ -48,6 +58,8 @@
 
   global.ContextLensPanelCapabilities = {
     supportsNativeSidePanel,
+    getPanelMode,
+    shouldUseNativePanel,
     prepareNativePanel,
     open,
     openInPagePanel,

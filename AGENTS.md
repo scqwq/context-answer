@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-这是一个 Chromium Manifest V3 浏览器扩展。用户左键划词或右键点击网页内容后，扩展采集 DOM 上下文，并在侧边栏把内容交给大模型分析。新增的“学习解释”模式面向代码和技术文档，固定输出翻译、含义、作用、结构与不确定点。
+这是一个 Chromium Manifest V3 浏览器扩展。用户左键划词或右键点击网页内容后，扩展采集 DOM 上下文，并交给大模型分析。默认 UI 是可拖动的网页内 **ContextAnswer** 面板；它包含“学习模式”和“普通聊天”，并可按配置退回原生侧边栏。
 
 ## 技术栈
 
@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 浏览器扩展 | Manifest V3、Chrome Extension API | 权限、内容脚本、右键菜单、存储、侧边栏 |
 | 网页采集 | 原生 DOM、`Selection`、`Range` | 获取选区、代码块、表格、章节、前后文和正文 |
-| 侧边栏 | HTML、CSS、原生 JavaScript | 模型设置、会话、流式回答、学习模式选择 |
+| ContextAnswer 面板 | Shadow DOM、HTML、CSS、原生 JavaScript | 可拖动 UI、设置、模型切换、聊天和学习模式 |
 | 模型通信 | `fetch`、SSE | 调用 Gemini、OpenAI、Claude 或兼容 OpenAI 的端点 |
 | 本地 Agent（可选） | Node.js、`@sking7/agent-cli-unified` | 在 `localhost:3100` 调度本机 CLI Agent |
 
@@ -26,6 +26,10 @@
 | `sidepanel/learning/` | 学习模式的状态、UI、提示词和样式 | 新学习能力按职责拆文件，避免回填主文件 |
 | `shared/learning-prompt.js` | 侧边栏与网页内面板共用的学习提示词契约 | 不依赖 DOM 或单个浏览器 API |
 | `shared/learning-options.js` | 学习请求的语言、上下文和回答风格选项 | 面板设置优先，翻译等策略由 `.env` 提供默认值 |
+| `shared/learning-memory.js` | 同一选区学习记忆与低频摘要任务 | 仅保存用户可见的问答；按“页面来源 + 语言 + 规范化选区”哈希隔离 |
+| `shared/chat-prompt.js` | 普通聊天提示词 | 只使用本次网页内面板的最近会话，勿混入学习模式记忆 |
+| `shared/context-answer-models.js` | ContextAnswer 的模型清单与当前选择 | 合并 `.env` 只读预置项和网页保存项；Key 仅在 `chrome.storage.local`，不能写入日志或文档 |
+| `shared/panel-preferences.js` | 面板宿主策略与充分性评估开关 | 设置页值优先于 `.env` 默认值 |
 | `shared/learning-history.js` | 学习回答历史的限量持久化 | 保存学习模式已完成的问题与回答，供用户主动查看；不得混入诊断或时间线键 |
 | `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
 | `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式按 0、5、10、20 行评估；20 行仍不足时要求用户补充 |
@@ -35,12 +39,13 @@
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
 | `background/jev-assessment.js` | TypeSafe Jev 协议适配器 | 仅请求 `/v1/systemone` 的 `state + questions`；不得伪装成 OpenAI Chat API |
 | `background/context-assessment-router.js` | 自动上下文判断路线选择 | Jev 高置信度优先，低置信度/异常/未配置时回退 LLM；两者关闭则跳过判断 |
-| `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口 |
+| `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口和本地 Agent Bridge |
 | `fallback/` | 无原生侧栏时的 Shadow DOM 右侧学习面板 | 不读取网页样式；只通过消息与后台通信 |
+| `fallback/panel-drag.js` | 网页内面板拖动与位置恢复 | 只保存安全的坐标，必须限制在当前视口内 |
 | `fallback/answer-renderer.js` | 网页内回答的安全有限 Markdown 渲染 | 只创建 DOM 节点，绝不能对模型输出使用 `innerHTML` |
 | `diagnostics/` | 不含敏感信息的故障分析记录 | 记录现象、复现条件、排查顺序与已实施修复 |
 | `sidepanel/config.js` | 读取生成后的本地运行时默认配置 | 不写真实密钥 |
-| `scripts/build-env.js` | `.env` 转 `sidepanel/config.local.js` | 远程/本地模型由显式开关选择，只允许白名单参数进入扩展 |
+| `scripts/build-env.js` | `.env` 转 `sidepanel/config.local.js` | 解析默认模型、最多 5 个额外模型槽位和学习设置；只允许白名单参数进入扩展 |
 | `bridge/server.js` | 可选本地 CLI Agent Bridge | 修改前评估 CORS、工作目录与命令执行风险 |
 | `.env` | 本机 API 默认配置 | 已忽略，绝不提交 |
 | `.env.example` | 环境变量模板 | 仅保留无密钥示例 |
@@ -50,17 +55,22 @@
 ```text
 用户划词 / 右键
   -> content.js 生成 contextData
-  -> background/panel-capabilities.js 选择面板宿主
-  -> 支持 chrome.sidePanel：sidepanel.js 接收并发送请求
-  -> 不支持：fallback/in-page-panel.js 显示网页右侧面板
+  -> background/panel-capabilities.js 根据 auto/native/in-page 策略选择宿主
+  -> 默认：fallback/in-page-panel.js 显示可拖动的 ContextAnswer 面板
+  -> native/auto 且浏览器可用：sidepanel.js 接收并发送请求
   -> Jev 优先判断选区是否充分 -> 低置信度或不可用时 LLM 回退判断
   -> 必要时 content.js 重取上下各 5 / 10 / 20 行
   -> background/fallback-chat.js 发起最终模型流并把文本块回传
+  -> 学习完成后 shared/learning-memory.js 记录问答，必要时异步低频压缩旧轮次
 ```
 
 ### 学习请求布局与编排细则
 
-- 原生侧边栏在“回答模式”下依次显示：语言提示、上下文模式、手动行数。网页内回退面板在选区预览下显示同一组控件。语言与上下文选择会保存到 `chrome.storage.local`。
+- ContextAnswer 默认使用网页内面板，标题下可切换“学习模式 / 普通聊天”，右上角有主页、历史、日志和设置；拖动标题空白处即可移动面板。`native` 策略保留既有原生侧边栏兼容路径。
+- 学习模式在选区预览下显示语言、上下文模式和手动行数；上下文模式为 `auto`、`manual`、`custom`。`custom` 显示补充文本框，只发送选区和用户主动粘贴的远处资料。
+- 普通聊天保留本面板最近 20 轮问答；学习模式记忆按选区哈希保存最多 20 轮原文，提示词仅注入已准备好的摘要和最近 4 轮。达到 8 轮后，每新增 4 轮才在回答完成后异步压缩一次，绝不阻塞当前回答。
+- 主页只保留模型下拉选择，绝不显示 Key、URL 或模型编辑字段。设置页可修改面板策略、自动充分性评估开关，并通过“添加模型 / 模型列表”新增、修改、删除浏览器内模型。
+- `.env` 默认模型始终可由主页“环境默认模型”切回；`CONTEXTLENS_EXTRA_MODEL_1_*` 至 `_5_*` 会作为只读预置项进入主页下拉和设置页列表。预置项需编辑 `.env` 后执行构建，不能在网页设置中直接删除；可“复制编辑”为浏览器内模型。
 - 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
 - 上下文模式：`auto` 先将最小选区交给判断路由：已启用且配置完整的 Jev 为主路线，Jev 低置信度、异常或未配置时由 LLM JSON 判断回退；任一路线判定不足后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估、不调用 Jev/LLM、不发送 `GET_CONTEXT_WINDOW`，只将最小选区交给最终回答模型。
 - Jev 使用 TypeSafe System One 的 `POST /v1/systemone`、`state + questions` 与结构化 `answers` 协议。`answerability` 和 `context_direction` 都是 `choice` 问题；只有 `sufficient` / `insufficient` 且置信度达到阈值时才作为自动决策，否则回退 LLM。
@@ -87,6 +97,8 @@
 | `CONTEXTLENS_API_URL` | `https://provider.example/v1` | 远程 OpenAI 兼容接口基地址；未设完整 Endpoint 时自动补 `/chat/completions` |
 | `CONTEXTLENS_API_ENDPOINT` | `https://provider.example/api/chat` | 可选完整请求地址；填写后原样请求，不会拼接路径 |
 | `CONTEXTLENS_MODEL` | `gpt-4o-mini` | 远程模型标识 |
+| `CONTEXTLENS_EXTRA_MODEL_1_*` ～ `_5_*` | `NAME`、`PROVIDER`、`API_URL`、`API_KEY`、`MODEL` 等 | 最多 5 组额外预置模型；供应商支持 `gemini`、`openai`、`claude`、`custom` 和四种 `*-agent` |
+| `CONTEXTLENS_PANEL_MODE` | `in-page` | `in-page`（默认统一网页内面板）、`auto` 或 `native`；设置页可覆盖 |
 | `CONTEXTLENS_LEARNING_TRANSLATION_ENABLED` | `true` | 学习解释默认是否包含翻译；面板语言/上下文选择可单次覆盖其他设置 |
 | `CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE` | `zh-CN` | 学习回答的默认语言；旧 `TARGET_LANGUAGE` 仍兼容 |
 | `CONTEXTLENS_LEARNING_TRANSLATION_LANGUAGE` | `zh-CN` | 启用翻译时的目标语言 |
@@ -99,6 +111,7 @@
 | `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，支持 0（仅选区）/ 5 / 10 / 20 |
+| `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | `true` | 是否允许 `auto` 模式调用 Jev / LLM 评估；设置页可覆盖 |
 | `CONTEXTLENS_JEV_ENABLED` | `false` | 是否启用 Jev 主判断路线；需同时配置 Key、URL、Model |
 | `CONTEXTLENS_JEV_API_KEY` | 真实 Key | TypeSafe Jev API Key；仅随被忽略的本地配置进入扩展 |
 | `CONTEXTLENS_JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One 完整请求地址，不走 OpenAI `/chat/completions` |
@@ -106,6 +119,9 @@
 | `CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD` | `0.75` | Choice 判断生效的最低置信度，运行时收敛到 0.50～0.95；低于此值回退 LLM |
 | `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | `true` | 是否保留既有 LLM JSON 判断作为 Jev 回退路线；与 Jev 同时关闭则禁用自动判断 |
 | `CONTEXTLENS_LOCAL_API_URL` / `CONTEXTLENS_LOCAL_MODEL` | `http://localhost:11434/v1` / `qwen2.5-coder:7b` | 仅本地开关开启后生效的本地模型配置 |
+| `CONTEXTLENS_USE_LOCAL_AGENT` | `false` | 为 `true` 时优先选择本地 Agent Bridge；与本地 API 开关同时开启时 Agent 优先 |
+| `CONTEXTLENS_LOCAL_AGENT_PROVIDER` | `codex-agent` | `claude-agent`、`codex-agent`、`antigravity-agent` 或 `copilot-agent` |
+| `CONTEXTLENS_LOCAL_AGENT_COMMAND_PATH` | 空 | 可选 CLI 可执行文件路径；Bridge 会校验其是否匹配当前 Agent |
 | `CONTEXTLENS_BRIDGE_URL` | `http://localhost:3100` | 可选本地 Agent Bridge 地址 |
 
 ## 本地运行与检查
@@ -143,10 +159,12 @@ npm run bridge  # 只有本地 Agent 模式需要
 - 普通“学习解释”模式不需要启动 Bridge，也不应拥有写本机文件的能力。
 - 不要把 API Key、用户选区全文或聊天历史写入日志、README 或任何会提交的文件。
 - LLM 时间线与脱敏诊断键永远不能保存响应正文；学习回答历史只能写入独立的 `contextLensLearningAnswerHistory` 键，并遵守条数与字符上限。
+- 学习记忆是用户明确需要的会话功能，单独保存在 `contextAnswerLearningMemory`：最多 8 个选区范围、每范围 20 轮。它可保存问题、回答和摘要，但绝不能被诊断、时间线或导出日志读取。
+- `contextAnswerModels` 仅存浏览器内新增的可编辑模型；`.env` 预置模型不会复制到该键。两类模型的 Key 都不可记录到诊断、时间线、README 或 Git。
 - Jev API Key 与普通模型 Key 同样敏感。当前个人本机扩展可由 `.env` 构建进本地忽略文件；若发布给他人，必须改由受认证的服务端或 Bridge 代理请求，不能把 Key 随扩展分发。
 - `host_permissions` 当前为 `<all_urls>`；新增采集能力时须避免采集密码框、支付页或无关隐私内容。
 - `bridge/server.js` 目前是本机服务；如准备公开发布或允许任意网页调用，必须收紧 CORS、验证扩展来源，并要求用户确认工作目录与执行动作。
-- Chromium 的 `sidePanel` 是当前 UI 基础。Firefox/Safari 支持应新增适配层，不要把浏览器判断散落进 DOM 提取或提示词模块。
+- Chromium 的 `sidePanel` 是可选兼容宿主；默认 UI 是不依赖该 API 的网页内面板。Firefox/Safari 支持仍应新增适配层，不要把浏览器判断散落进 DOM 提取或提示词模块。
 - 面板选择使用“能力路由 + 策略对象”：`panel-capabilities.js` 先检测 API，再按原生侧栏、网页内面板的优先级调用统一 `open()`；这不是在各业务文件堆叠浏览器 `if/else`。
 - 网页内面板不能运行在浏览器内置页、扩展商店、受企业策略限制页面或无法注入内容脚本的跨域环境。
 

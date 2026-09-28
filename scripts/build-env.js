@@ -50,7 +50,28 @@ const local = {
   apiEndpoint: env.CONTEXTLENS_LOCAL_API_ENDPOINT || "",
   model: env.CONTEXTLENS_LOCAL_MODEL || ""
 };
+const localAgent = {
+  provider: env.CONTEXTLENS_LOCAL_AGENT_PROVIDER || "",
+  commandPath: env.CONTEXTLENS_LOCAL_AGENT_COMMAND_PATH || ""
+};
+// 固定槽位让 .env 保持易读；留空的槽位不会进入扩展模型列表。
+const extraModels = Array.from({ length: 5 }, (_, index) => {
+  const slot = index + 1;
+  const prefix = `CONTEXTLENS_EXTRA_MODEL_${slot}_`;
+  return {
+    id: `env-extra-${slot}`,
+    label: env[`${prefix}NAME`] || "",
+    provider: env[`${prefix}PROVIDER`] || "",
+    apiKey: env[`${prefix}API_KEY`] || "",
+    apiUrl: env[`${prefix}API_URL`] || "",
+    apiEndpoint: env[`${prefix}API_ENDPOINT`] || "",
+    model: env[`${prefix}MODEL`] || "",
+    bridgeUrl: env[`${prefix}BRIDGE_URL`] || "",
+    commandPath: env[`${prefix}COMMAND_PATH`] || ""
+  };
+}).filter((model) => model.label || model.provider || model.model);
 const learning = {
+  assessmentEnabled: isEnabled(env.CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED, true),
   translationEnabled: !/^(0|false|no)$/i.test(env.CONTEXTLENS_LEARNING_TRANSLATION_ENABLED || "true"),
   // TARGET_LANGUAGE 保留为旧配置兼容项；新配置区分回答语言与翻译语言。
   responseLanguage: env.CONTEXTLENS_LEARNING_RESPONSE_LANGUAGE || env.CONTEXTLENS_LEARNING_TARGET_LANGUAGE || "zh-CN",
@@ -77,7 +98,20 @@ const learning = {
     llmEnabled: isEnabled(env.CONTEXTLENS_LLM_ASSESSMENT_ENABLED, true)
   }
 };
-const config = { useLocalModel: isTrue, remote, local, learning, bridgeUrl: env.CONTEXTLENS_BRIDGE_URL || "" };
+const panelMode = ["auto", "native", "in-page"].includes(String(env.CONTEXTLENS_PANEL_MODE || "").trim())
+  ? String(env.CONTEXTLENS_PANEL_MODE).trim()
+  : "in-page";
+const config = {
+  useLocalModel: isTrue,
+  useLocalAgent: isEnabled(env.CONTEXTLENS_USE_LOCAL_AGENT, false),
+  remote,
+  local,
+  localAgent,
+  extraModels,
+  learning,
+  panelMode,
+  bridgeUrl: env.CONTEXTLENS_BRIDGE_URL || ""
+};
 
 const output = `// 由 scripts/build-env.js 自动生成；不要提交此文件。\nglobalThis.CONTEXT_LENS_LOCAL_ENV = ${JSON.stringify(config, null, 2)};\n`;
 fs.writeFileSync(outputPath, output, "utf8");
