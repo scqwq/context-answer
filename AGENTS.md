@@ -31,6 +31,8 @@
 | `shared/request-diagnostics.js` | LLM 调用的脱敏诊断记录 | 仅保存阶段、供应商、传输方式、HTTP 状态和错误摘要，严禁记录密钥、URL、选区或回答 |
 | `shared/llm-timeline.js` | LLM 调用时间线与耗时指标 | 以单次模型调用为单位记录 `t=0`、HTTP 响应、首个流数据、首段输出和结束状态；严禁记录模型原文 |
 | `background/panel-capabilities.js` | 原生侧栏与网页内面板的能力路由 | 以策略对象统一 `open()`，禁止业务层直接调用 `chrome.sidePanel` |
+| `background/jev-assessment.js` | TypeSafe Jev 协议适配器 | 仅请求 `/v1/systemone` 的 `state + questions`；不得伪装成 OpenAI Chat API |
+| `background/context-assessment-router.js` | 自动上下文判断路线选择 | Jev 高置信度优先，低置信度/异常/未配置时回退 LLM；两者关闭则跳过判断 |
 | `background/fallback-chat.js` | 网页内面板的模型流式请求与转发 | 请求在 Service Worker 中执行，支持 Gemini、Claude、OpenAI 兼容接口 |
 | `fallback/` | 无原生侧栏时的 Shadow DOM 右侧学习面板 | 不读取网页样式；只通过消息与后台通信 |
 | `fallback/answer-renderer.js` | 网页内回答的安全有限 Markdown 渲染 | 只创建 DOM 节点，绝不能对模型输出使用 `innerHTML` |
@@ -49,7 +51,8 @@
   -> background/panel-capabilities.js 选择面板宿主
   -> 支持 chrome.sidePanel：sidepanel.js 接收并发送请求
   -> 不支持：fallback/in-page-panel.js 显示网页右侧面板
-  -> LLM 评估选区是否充分 -> 必要时 content.js 重取上下各 5 / 10 / 20 行
+  -> Jev 优先判断选区是否充分 -> 低置信度或不可用时 LLM 回退判断
+  -> 必要时 content.js 重取上下各 5 / 10 / 20 行
   -> background/fallback-chat.js 发起最终模型流并把文本块回传
 ```
 
@@ -57,7 +60,9 @@
 
 - 原生侧边栏在“回答模式”下依次显示：语言提示、上下文模式、手动行数。网页内回退面板在选区预览下显示同一组控件。语言与上下文选择会保存到 `chrome.storage.local`。
 - 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
-- 上下文模式：`auto` 先将最小选区交给 LLM 充分性评估；模型返回 JSON 后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估。
+- 上下文模式：`auto` 先将最小选区交给判断路由：已启用且配置完整的 Jev 为主路线，Jev 低置信度、异常或未配置时由 LLM JSON 判断回退；任一路线判定不足后，扩展按上下各 `5 -> 10 -> 20` 行重新向内容脚本取窗口。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估。
+- Jev 使用 TypeSafe System One 的 `POST /v1/systemone`、`state + questions` 与结构化 `answers` 协议。`answerability` 和 `context_direction` 都是 `choice` 问题；只有 `sufficient` / `insufficient` 且置信度达到阈值时才作为自动决策，否则回退 LLM。
+- `CONTEXTLENS_JEV_ENABLED=false` 且 `CONTEXTLENS_LLM_ASSESSMENT_ENABLED=false` 时，自动判断和自动扩展均失效；界面必须明确提示“仅使用当前选区”，但最终解释模型仍照常调用。
 - 自动模式最多评估四次（0、5、10、20）；模型 JSON 不可解析时立即回退为当前选区回答，禁止循环重试；20 行仍不足时提示用户粘贴模型指定的定义、调用处或章节内容。
 - 评估请求使用非流式短响应，最终学习回答才使用流式响应；两类阶段均写入脱敏诊断日志。
 - `content.js` 的 `GET_CONTEXT_WINDOW` 是上下文扩展入口。代码按源码行取窗口；普通网页按可见文本逻辑行取窗口。不要把该接口改成默认全文采集。
@@ -91,6 +96,12 @@
 | `CONTEXTLENS_LEARNING_SOURCE_LANGUAGE` | `auto` | 语言提示默认值，例如 `typescript`、`python`、`vue` |
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，支持 0（仅选区）/ 5 / 10 / 20 |
+| `CONTEXTLENS_JEV_ENABLED` | `false` | 是否启用 Jev 主判断路线；需同时配置 Key、URL、Model |
+| `CONTEXTLENS_JEV_API_KEY` | 真实 Key | TypeSafe Jev API Key；仅随被忽略的本地配置进入扩展 |
+| `CONTEXTLENS_JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One 完整请求地址，不走 OpenAI `/chat/completions` |
+| `CONTEXTLENS_JEV_MODEL` | `jev-latest` | Jev 模型名；需可固定为具体版本以便复现实验 |
+| `CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD` | `0.75` | Choice 判断生效的最低置信度，运行时收敛到 0.50～0.95；低于此值回退 LLM |
+| `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | `true` | 是否保留既有 LLM JSON 判断作为 Jev 回退路线；与 Jev 同时关闭则禁用自动判断 |
 | `CONTEXTLENS_LOCAL_API_URL` / `CONTEXTLENS_LOCAL_MODEL` | `http://localhost:11434/v1` / `qwen2.5-coder:7b` | 仅本地开关开启后生效的本地模型配置 |
 | `CONTEXTLENS_BRIDGE_URL` | `http://localhost:3100` | 可选本地 Agent Bridge 地址 |
 
@@ -107,9 +118,9 @@ npm run bridge  # 只有本地 Agent 模式需要
 
 ## LLM 调用诊断
 
-网页内面板右上角的“诊断”会显示最近 15 条脱敏运行日志；日志实际保存在扩展的 `chrome.storage.local`，以便浏览器扩展在无本机文件写入权限时仍能稳定记录。每条日志包含时间、展示面板、阶段、供应商、传输方式、HTTP 状态（如有）和错误摘要；不会保存 API Key、完整 URL、选区、提示词、请求头或模型回答。静态排查记录放在 `diagnostics/`。
+网页内面板右上角的“日志”会显示最近 15 条脱敏运行日志；日志实际保存在扩展的 `chrome.storage.local`，以便浏览器扩展在无本机文件写入权限时仍能稳定记录。每条日志包含时间、展示面板、阶段、供应商、传输方式、HTTP 状态（如有）和错误摘要；不会保存 API Key、完整 URL、选区、提示词、请求头或模型回答。静态排查记录放在 `diagnostics/`。
 
-自动上下文会额外产生短的“充分性评估”模型请求。评估请求不展示给用户；模型只返回 JSON 决策。最终回答才使用流式请求。若 20 行仍不足，界面必须明确告诉用户缺少什么，不能继续自动扩大到全文。
+自动上下文会额外产生短的“充分性评估”请求。Jev 启用时先返回带置信度的结构化 Choice；低置信度才调用既有 LLM JSON 评估。最终回答才使用流式请求。若 20 行仍不足，界面必须明确告诉用户缺少什么，不能继续自动扩大到全文。
 
 ### LLM 调用时间线
 
@@ -125,6 +136,7 @@ npm run bridge  # 只有本地 Agent 模式需要
 - 普通“学习解释”模式不需要启动 Bridge，也不应拥有写本机文件的能力。
 - 不要把 API Key、用户选区全文或聊天历史写入日志、README 或任何会提交的文件。
 - LLM 时间线的模型名可记录，但任何响应正文只能显示在当前用户会话内，不能写入 `chrome.storage.local` 的日志键。
+- Jev API Key 与普通模型 Key 同样敏感。当前个人本机扩展可由 `.env` 构建进本地忽略文件；若发布给他人，必须改由受认证的服务端或 Bridge 代理请求，不能把 Key 随扩展分发。
 - `host_permissions` 当前为 `<all_urls>`；新增采集能力时须避免采集密码框、支付页或无关隐私内容。
 - `bridge/server.js` 目前是本机服务；如准备公开发布或允许任意网页调用，必须收紧 CORS、验证扩展来源，并要求用户确认工作目录与执行动作。
 - Chromium 的 `sidePanel` 是当前 UI 基础。Firefox/Safari 支持应新增适配层，不要把浏览器判断散落进 DOM 提取或提示词模块。

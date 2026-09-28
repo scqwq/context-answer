@@ -22,11 +22,15 @@
           requestId: workflowId,
           timeoutMs: options.assessmentTimeoutMs,
           model,
-          prompt
+          prompt,
+          context: candidate,
+          question,
+          languageHint: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage),
+          radius
         });
         assertNotAborted(signal);
         if (!response?.success) throw new Error(response?.error || "上下文评估请求失败。");
-        return response.text;
+        return response.decision;
       },
       expand: async (radius) => {
         assertNotAborted(signal);

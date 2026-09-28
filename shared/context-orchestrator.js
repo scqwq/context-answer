@@ -9,6 +9,13 @@
     return result;
   }
 
+  // 兼容旧 LLM 的 JSON 文本结果与 Jev 路由器直接返回的结构化决策。
+  function normalizeDecision(result) {
+    if (typeof result === "string") return global.ContextLensContextAssessment.parse(result);
+    if (result && typeof result.sufficient === "boolean") return result;
+    return null;
+  }
+
   async function prepare({ context, question, options, assess, expand, onProgress = () => {} }) {
     if (!context?.selectedText) return { status: "ready", context };
     if (options.contextMode === "manual") {
@@ -20,8 +27,8 @@
     for (let index = 0; index < AUTO_STEPS.length; index += 1) {
       const radius = AUTO_STEPS[index];
       onProgress(radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…`);
-      const assessmentText = await assess(working, radius);
-      const decision = global.ContextLensContextAssessment.parse(assessmentText);
+      const assessmentResult = await assess(working, radius);
+      const decision = normalizeDecision(assessmentResult);
       // 供应商未遵守 JSON 契约时直接回答，避免出现无意义的自动重试循环。
       if (!decision || decision.sufficient) return { status: "ready", context: working, assessment: decision };
       if (radius === 20) {

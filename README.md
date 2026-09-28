@@ -25,6 +25,7 @@ It also supports **local CLI coding agents** (Claude Code, Codex CLI, Antigravit
 - **Real-time streaming output**: All models support SSE streaming; local agents additionally show logs, reasoning, and tool calls.
 - **Interrupt while running**: Send button switches to a red stop button during request execution; click to cancel immediately (before first token or during streaming).
 - **LLM timing timeline**: Every API/Agent call records its own `t=0`, dispatch, HTTP response, first stream data, first displayable output, end state, and aggregate timing metrics for performance tuning.
+- **Fast Jev context gate**: Optional TypeSafe Jev decision route checks whether the selected context is sufficient before the generative model runs; the existing LLM JSON check remains a fallback.
 - **Model config modal improvements**: Switching provider automatically resets irrelevant fields; model sync success messages auto-dismiss.
 - **Bilingual UI**: One-click `Chinese / English` switching in the side panel, including static and major dynamic messages.
 - **Glassmorphism UI**: Frosted style with polished transitions, code highlighting, and breathing status indicators.
@@ -208,6 +209,21 @@ All API endpoints use SSE streaming. Local agents also parse these event types:
 ### 学习模式的手动上下文
 
 在“手动选择”模式下，可选上下各 `0 / 5 / 10 / 20` 行。`0 行（仅选区）` 不会发起上下文充分性评估，也不会额外读取网页前后内容，适合已经完整的单行代码、短定义或希望控制发送内容的场景。
+
+### Jev 优先的自动上下文判断
+
+自动模式支持两条可独立开关的判断路线：Jev 是主路线，既有生成式 LLM JSON 判断是回退路线。Jev 使用 TypeSafe 的 System One API，发送 `state` 与两道 `choice` 问题：当前内容是否足够回答、若不足应优先读取前文/后文/两侧。只有 `sufficient` 或 `insufficient` 的置信度达到阈值时才会生效；低置信度、网络异常或未完成配置时会回退到 LLM。
+
+```env
+CONTEXTLENS_JEV_ENABLED=true
+CONTEXTLENS_JEV_API_KEY=请填入你的 TypeSafe Key
+CONTEXTLENS_JEV_API_URL=https://api.typesafe.ai/v1/systemone
+CONTEXTLENS_JEV_MODEL=jev-latest
+CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD=0.75
+CONTEXTLENS_LLM_ASSESSMENT_ENABLED=true
+```
+
+Jev 不是 OpenAI 兼容聊天接口，不能配置到 `CONTEXTLENS_API_URL` 中；它的完整协议由 `background/jev-assessment.js` 独立处理。将两条开关同时设为 `false` 后，自动模式会明确提示“仅使用当前选区”，并跳过上下文判断和扩展，最终解释仍由你配置的正常 API 模型完成。
 
 ---
 

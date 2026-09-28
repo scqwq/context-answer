@@ -215,6 +215,7 @@
       return event(tabId, requestId, { event: "chunk", text });
     };
     const transport = model.apiEndpoint ? "direct-endpoint" : "openai-compatible-base-url";
+    const assessmentConfig = global.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {};
     try {
       await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "context-preparation-started", provider: model.provider, transport });
       const prepared = await global.ContextLensContextOrchestrator.prepare({
@@ -222,10 +223,27 @@
         question: instruction,
         options,
         assess: async (candidate, radius) => {
-          await event(tabId, requestId, { event: "status", text: radius === 0 ? "正在评估选区是否足够回答…" : `正在评估上下各 ${radius} 行上下文…` });
-          const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint: global.ContextLensLearningOptions.languageLabel(options.sourceLanguage), radius });
+          const languageHint = global.ContextLensLearningOptions.languageLabel(options.sourceLanguage);
+          const jevReady = assessmentConfig.jev?.enabled && global.ContextLensJevAssessment.isConfigured(assessmentConfig.jev);
+          const judgingLabel = jevReady
+            ? "正在由 Jev 判断选区是否足够回答…"
+            : (assessmentConfig.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…");
+          await event(tabId, requestId, { event: "status", text: radius === 0 ? judgingLabel : `正在判断上下各 ${radius} 行上下文…` });
+          const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint, radius });
           return withAssessmentTimeout(
-            (assessmentSignal) => assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport }),
+            (assessmentSignal) => global.ContextLensAssessmentRouter.assess({
+              context: candidate,
+              question: instruction,
+              languageHint,
+              radius,
+              assessmentConfig,
+              signal: assessmentSignal,
+              surface: "in-page-panel",
+              llmAssess: async () => {
+                const text = await assess(model, assessmentPrompt, assessmentSignal, { surface: "in-page-panel", transport });
+                return global.ContextLensContextAssessment.parse(text);
+              }
+            }),
             controller.signal,
             options.assessmentTimeoutMs
           );
@@ -240,6 +258,9 @@
         await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "needs-user-context", provider: model.provider, transport, error: prepared.message });
         await event(tabId, requestId, { event: "needs-context", message: prepared.message });
         return;
+      }
+      if (prepared.assessment?.disabled) {
+        await event(tabId, requestId, { event: "status", text: prepared.assessment.reason || "自动上下文判断已关闭，正在仅使用当前选区回答…" });
       }
       const prompt = global.ContextLensLearningPrompt.buildPrompt({
         context: prepared.context,

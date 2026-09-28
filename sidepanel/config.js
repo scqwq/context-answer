@@ -34,7 +34,17 @@
         assessmentTimeoutMs: Math.min(300000, Math.max(5000, Number(raw.learning?.assessmentTimeoutMs) || 15000)),
         sourceLanguage: String(raw.learning?.sourceLanguage || "auto"),
         contextMode: raw.learning?.contextMode === "manual" ? "manual" : "auto",
-        manualLines: [0, 5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5
+        manualLines: [0, 5, 10, 20].includes(Number(raw.learning?.manualLines)) ? Number(raw.learning.manualLines) : 5,
+        assessment: {
+          jev: {
+            enabled: raw.learning?.assessment?.jev?.enabled === true,
+            apiKey: String(raw.learning?.assessment?.jev?.apiKey || ""),
+            apiUrl: String(raw.learning?.assessment?.jev?.apiUrl || "https://api.typesafe.ai/v1/systemone"),
+            model: String(raw.learning?.assessment?.jev?.model || "jev-latest"),
+            confidenceThreshold: Math.min(0.95, Math.max(0.5, Number(raw.learning?.assessment?.jev?.confidenceThreshold) || 0.75))
+          },
+          llmEnabled: raw.learning?.assessment?.llmEnabled !== false
+        }
       },
       bridgeUrl: String(raw.bridgeUrl || source.bridgeUrl || "")
     };

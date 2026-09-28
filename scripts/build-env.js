@@ -29,6 +29,9 @@ if (!fs.existsSync(envPath)) {
 
 const env = parseEnv(fs.readFileSync(envPath, "utf8"));
 const isTrue = /^(1|true|yes)$/i.test(env.CONTEXTLENS_USE_LOCAL_MODEL || "");
+const isEnabled = (value, fallback) => value === undefined || value === ""
+  ? fallback
+  : /^(1|true|yes)$/i.test(value);
 function boundedMs(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(300000, Math.max(5000, parsed)) : fallback;
@@ -60,7 +63,19 @@ const learning = {
   assessmentTimeoutMs: boundedMs(env.CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS, 15000),
   sourceLanguage: env.CONTEXTLENS_LEARNING_SOURCE_LANGUAGE || "auto",
   contextMode: env.CONTEXTLENS_LEARNING_CONTEXT_MODE || "auto",
-  manualLines: Number(env.CONTEXTLENS_LEARNING_MANUAL_LINES || 5)
+  manualLines: Number(env.CONTEXTLENS_LEARNING_MANUAL_LINES || 5),
+  assessment: {
+    // Jev 是可选的主判断路线；未填 Key 时默认关闭，不影响现有 LLM 判断。
+    jev: {
+      enabled: isEnabled(env.CONTEXTLENS_JEV_ENABLED, false),
+      apiKey: env.CONTEXTLENS_JEV_API_KEY || "",
+      apiUrl: env.CONTEXTLENS_JEV_API_URL || "https://api.typesafe.ai/v1/systemone",
+      model: env.CONTEXTLENS_JEV_MODEL || "jev-latest",
+      confidenceThreshold: Math.min(0.95, Math.max(0.5, Number(env.CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD) || 0.75))
+    },
+    // 保持现有实现作为 Jev 不可用、低置信度或关闭时的回退路线。
+    llmEnabled: isEnabled(env.CONTEXTLENS_LLM_ASSESSMENT_ENABLED, true)
+  }
 };
 const config = { useLocalModel: isTrue, remote, local, learning, bridgeUrl: env.CONTEXTLENS_BRIDGE_URL || "" };
 

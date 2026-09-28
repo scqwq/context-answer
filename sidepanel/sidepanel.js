@@ -3952,10 +3952,12 @@ async function handleSendMessage() {
     }, activeLearningOptions.requestTimeoutMs);
     setRequestRunningState(true, messageTabId);
     if (learningNotice) {
+      const assessmentSettings = window.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {};
+      const jevReady = assessmentSettings.jev?.enabled && assessmentSettings.jev?.apiKey && assessmentSettings.jev?.apiUrl && assessmentSettings.jev?.model;
       learningNotice.hidden = false;
       learningNotice.textContent = activeLearningOptions.contextMode === "manual"
         ? `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`
-        : "正在评估选区是否足够回答…";
+        : (jevReady ? "正在由 Jev 判断选区是否足够回答…" : (assessmentSettings.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…"));
     }
     try {
       const runtimeDefaults = window.ContextLensRuntimeConfig?.getDefaults?.() || {};
@@ -3980,7 +3982,12 @@ async function handleSendMessage() {
       }
       currentContext = { ...currentContext, contextData: prepared.context };
       if (messageTabId) getTabState(messageTabId).currentContext = currentContext;
-      if (learningNotice) learningNotice.hidden = true;
+      if (learningNotice && prepared.assessment?.disabled) {
+        learningNotice.hidden = false;
+        learningNotice.textContent = prepared.assessment.reason || "自动上下文判断已关闭，已仅使用当前选区。";
+      } else if (learningNotice) {
+        learningNotice.hidden = true;
+      }
       continueLearningRequest = true;
     } catch (error) {
       if (learningNotice) learningNotice.textContent = planningController.signal.aborted
