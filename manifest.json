@@ -21,7 +21,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["shared/panel-preferences.js", "shared/context-answer-models.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-memory.js", "shared/learning-history.js", "shared/llm-timeline-view.js", "shared/log-export.js", "fallback/panel-drag.js", "fallback/in-page-i18n.js", "fallback/answer-renderer.js", "fallback/in-page-panel.js", "content.js"],
+      "js": ["shared/panel-preferences.js", "shared/context-answer-models.js", "shared/prompt-templates.js", "shared/chat-prompt.js", "shared/learning-options.js", "shared/learning-prompt.js", "shared/learning-memory.js", "shared/learning-history.js", "shared/llm-timeline-view.js", "shared/log-export.js", "fallback/panel-drag.js", "fallback/in-page-i18n.js", "fallback/answer-renderer.js", "fallback/in-page-panel.js", "content.js"],
       "css": ["content.css"]
     }
   ],

@@ -27,30 +27,6 @@
     };
   }
 
-  function buildQuestions() {
-    return {
-      answerability: {
-        type: "choice",
-        instructions: "Can the user question be answered accurately from this state alone, without guessing missing definitions, callers, return-value sources, control flow, or document context?",
-        criteria: {
-          sufficient: "The available selection and context are enough for an accurate answer.",
-          insufficient: "Additional webpage context is required for an accurate answer.",
-          uncertain: "The state does not support a reliable judgment either way."
-        }
-      },
-      context_direction: {
-        type: "choice",
-        instructions: "If more context is needed to answer the user question, which adjacent webpage area is most useful? Return none when no adjacent context is needed or the direction cannot be determined.",
-        criteria: {
-          before: "Definitions, setup, or preceding explanation are likely needed.",
-          after: "Implementation, result handling, or following explanation are likely needed.",
-          both: "Both preceding and following context are likely needed.",
-          none: "No adjacent context is needed or a direction cannot be determined."
-        }
-      }
-    };
-  }
-
   async function responseError(response) {
     const error = new Error(`Jev 上下文判断请求失败（HTTP ${response.status}）。`);
     error.status = response.status;
@@ -90,7 +66,7 @@
       const requestBody = JSON.stringify({
         model: config.model,
         state: buildState({ context, question, languageHint, radius }),
-        questions: buildQuestions()
+        questions: global.ContextLensPromptTemplates.buildJevQuestions()
       });
       // 只记录请求字符数，不记录请求内容，便于区分服务端慢与请求体过大。
       void timeline.dispatch({ requestChars: requestBody.length });

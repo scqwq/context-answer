@@ -68,7 +68,7 @@ pnpm run build:env
 pnpm run bridge  # 仅本地 Agent 模式需要
 ```
 
-主要目录：`content.js` 采集选区与上下文，`background/` 负责消息与模型请求，`fallback/` 是默认网页内面板，`shared/` 放提示词、状态、日志等共享逻辑，`sidepanel/` 保留原生侧边栏兼容实现。
+主要目录：`content.js` 采集选区与上下文，`background/` 负责消息与模型请求，`fallback/` 是默认网页内面板，`shared/` 放提示词、状态、日志等共享逻辑，`sidepanel/` 保留原生侧边栏兼容实现。所有运行时模型提示词统一在 `shared/prompt-templates.js`，每段模板都有原调用位置与功能注释。
 
 详细的模块契约、存储边界和维护规范请阅读 [AGENTS.md](AGENTS.md)。
 

@@ -27,6 +27,7 @@
 | `shared/learning-prompt.js` | 侧边栏与网页内面板共用的学习提示词契约 | 不依赖 DOM 或单个浏览器 API |
 | `shared/learning-options.js` | 学习请求的语言、上下文和回答风格选项 | 面板设置优先，翻译等策略由 `.env` 提供默认值 |
 | `shared/learning-memory.js` | 同一选区学习记忆与低频摘要任务 | 仅保存用户可见的问答；按“页面来源 + 语言 + 规范化选区”哈希隔离 |
+| `shared/prompt-templates.js` | 统一运行时提示词模板与占位符编译 | 集中维护聊天、学习、评估、记忆摘要和 Jev Choice 指令；每段模板须注明原调用位置和功能 |
 | `shared/chat-prompt.js` | 普通聊天提示词 | 只使用本次网页内面板的最近会话，勿混入学习模式记忆 |
 | `shared/context-answer-models.js` | ContextAnswer 的模型清单与当前选择 | 合并 `.env` 只读预置项和网页保存项；Key 仅在 `chrome.storage.local`，不能写入日志或文档 |
 | `shared/panel-preferences.js` | 面板宿主策略与充分性评估开关 | 设置页值优先于 `.env` 默认值 |
@@ -176,5 +177,5 @@ npm run bridge  # 只有本地 Agent 模式需要
 - 每个新增文件顶部写一句简短中文职责注释。
 - 一个文件只承担一种职责：状态、提示词、UI、样式、浏览器适配和模型协议不得混杂。
 - 新增环境变量时，同时更新 `.env.example`、`scripts/build-env.js` 和本表格。
-- 新增提示词字段时，同时检查 token 成本、隐私影响与上下文不足时的回退说明。
+- 新增或调整提示词时，统一在 `shared/prompt-templates.js` 操作；同时检查 token 成本、隐私影响与上下文不足时的回退说明，并在模板前标明调用位置和功能。
 - 任何改动完成后至少执行 `npm run check`；涉及页面采集时还要手工验证 Chrome/Edge 的左键和右键链路。
