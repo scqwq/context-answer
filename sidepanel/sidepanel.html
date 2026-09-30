@@ -241,6 +241,15 @@
               <input type="range" id="model-temperature" min="0" max="2" step="0.1" value="0.7">
             </div>
 
+            <div class="assessment-settings">
+              <div class="assessment-settings-title" data-i18n-text="settings.context_assessment_title">自动上下文判断</div>
+              <p class="assessment-settings-tip" data-i18n-text="settings.context_assessment_tip">这些开关只影响自动模式；最终回答仍会照常请求模型。</p>
+              <label class="assessment-switch-row"><span data-i18n-text="settings.context_assessment_enabled">启用自动上下文评估</span><span class="switch-label"><input id="context-assessment-enabled" type="checkbox"><span class="switch-custom"></span></span></label>
+              <label class="assessment-switch-row"><span data-i18n-text="settings.jev_assessment_enabled">启用 Jev 判断</span><span class="switch-label"><input id="jev-assessment-enabled" type="checkbox"><span class="switch-custom"></span></span></label>
+              <label class="assessment-switch-row"><span data-i18n-text="settings.llm_assessment_enabled">启用 LLM 兜底判断</span><span class="switch-label"><input id="llm-assessment-enabled" type="checkbox"><span class="switch-custom"></span></span></label>
+              <button type="button" id="assessment-settings-save-btn" class="secondary-btn" data-i18n-text="settings.save_context_assessment">保存上下文判断设置</button>
+            </div>
+
             <button type="button" id="settings-save-btn" class="submit-button glow-button" data-i18n-text="settings.save_active_model">保存激活模型</button>
             <div id="settings-status" class="settings-status"></div>
           </div>

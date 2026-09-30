@@ -30,7 +30,7 @@
 | `shared/prompt-templates.js` | 统一运行时提示词模板与占位符编译 | 集中维护聊天、学习、评估、记忆摘要和 Jev Choice 指令；每段模板须注明原调用位置和功能 |
 | `shared/chat-prompt.js` | 普通聊天提示词 | 只使用本次网页内面板的最近会话，勿混入学习模式记忆 |
 | `shared/context-answer-models.js` | ContextAnswer 的模型清单与当前选择 | 合并 `.env` 只读预置项和网页保存项；Key 仅在 `chrome.storage.local`，不能写入日志或文档 |
-| `shared/panel-preferences.js` | 面板宿主策略与充分性评估开关 | 设置页值优先于 `.env` 默认值 |
+| `shared/panel-preferences.js` | 面板宿主策略与充分性评估开关 | 设置页值优先于 `.env` 默认值；保存面板、自动评估、Jev 和 LLM 兜底开关 |
 | `shared/learning-history.js` | 学习回答历史的限量持久化 | 保存学习模式已完成的问题与回答，并按学习记忆哈希分组供用户查看；不得保存选区原文或混入诊断、时间线键 |
 | `shared/context-assessment.js` | LLM 上下文充分性评估提示词与 JSON 解析 | 只允许输出评估 JSON，解析失败时禁止无限重试 |
 | `shared/context-orchestrator.js` | 自动上下文状态机 | 自动模式在 0、5、10 行判断；扩展到 20 行后直接进入最终回答 |
@@ -73,7 +73,7 @@
 - 网页内面板和原生侧边栏共用 `uiLanguage`（`zh` / `en`）偏好。切换只影响控件、标签与静态提示；不得翻译用户选区、历史回答、模型名称、模型输出或 API 参数。
 - 学习模式在选区预览下显示语言、上下文模式和手动行数；上下文模式为 `auto`、`manual`、`custom`。`custom` 显示补充文本框，只发送选区和用户主动粘贴的远处资料。
 - 普通聊天保留本面板最近 20 轮问答；学习模式记忆按选区哈希保存最多 20 轮原文，提示词仅注入已准备好的摘要和最近 4 轮。达到 8 轮后，每新增 4 轮才在回答完成后异步压缩一次，绝不阻塞当前回答。
-- 主页只保留模型下拉选择，绝不显示 Key、URL 或模型编辑字段。设置页可修改面板策略、自动充分性评估开关，并通过“添加模型 / 模型列表”新增、修改、删除浏览器内模型。
+- 主页只保留模型下拉选择，绝不显示 Key、URL 或模型编辑字段。设置页可修改面板策略、自动充分性评估、Jev 和 LLM 兜底开关，并通过“添加模型 / 模型列表”新增、修改、删除浏览器内模型。
 - `.env` 默认模型始终可由主页“环境默认模型”切回；`CONTEXTLENS_EXTRA_MODEL_1_*` 至 `_5_*` 会作为只读预置项进入主页下拉和设置页列表。预置项需编辑 `.env` 后执行构建，不能在网页设置中直接删除；可“复制编辑”为浏览器内模型。
 - 语言可选自动识别及常见前后端语言；它是提示信息，不应被当作网页内容的事实声明。
 - 上下文模式：`auto` 先将最小选区交给判断路由：已启用且配置完整的 Jev 为主路线。Jev 高置信度 `sufficient` 后直接进入最终回答；高置信度 `insufficient` 或低置信度时按上下各 `5 -> 10 -> 20` 行扩展，并继续由 Jev 判断。若 10 行判断仍不足，扩展到最大 20 行后不再进行 Jev/LLM 充分性判断，直接交给最终回答模型；Jev 异常或未配置时才可由 LLM JSON 判断兜底。`manual` 可选 `0`（仅选区）或上下各 5/10/20 行；0 不触发自动评估、不调用 Jev/LLM、不发送 `GET_CONTEXT_WINDOW`，只将最小选区交给最终回答模型。
@@ -116,12 +116,12 @@
 | `CONTEXTLENS_LEARNING_CONTEXT_MODE` | `auto` | `auto` 让模型判断并按 5/10/20 行扩展；`manual` 使用下方行数 |
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `5` | 手动上下文模式下的上、下各行数，支持 0（仅选区）/ 5 / 10 / 20 |
 | `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | `true` | 是否允许 `auto` 模式调用 Jev / LLM 评估；设置页可覆盖 |
-| `CONTEXTLENS_JEV_ENABLED` | `false` | 是否启用 Jev 主判断路线；需同时配置 Key、URL、Model |
+| `CONTEXTLENS_JEV_ENABLED` | `false` | 是否启用 Jev 主判断路线；需同时配置 Key、URL、Model；设置页可覆盖开关 |
 | `CONTEXTLENS_JEV_API_KEY` | 真实 Key | TypeSafe Jev API Key；仅随被忽略的本地配置进入扩展 |
 | `CONTEXTLENS_JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Jev System One 完整请求地址，不走 OpenAI `/chat/completions` |
 | `CONTEXTLENS_JEV_MODEL` | `jev-latest` | Jev 模型名；需可固定为具体版本以便复现实验 |
 | `CONTEXTLENS_JEV_CONFIDENCE_THRESHOLD` | `0.75` | Choice 判断生效的最低置信度，运行时收敛到 0.50～0.95；低于此值按上下文不足扩展后重试 Jev |
-| `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | `true` | Jev 未配置或请求失败时，是否保留 LLM JSON 判断作为兜底；与 Jev 同时关闭则禁用自动判断 |
+| `CONTEXTLENS_LLM_ASSESSMENT_ENABLED` | `true` | Jev 未配置或请求失败时，是否保留 LLM JSON 判断作为兜底；设置页可覆盖开关；与 Jev 同时关闭则禁用自动判断 |
 | `CONTEXTLENS_LOCAL_API_URL` / `CONTEXTLENS_LOCAL_MODEL` | `http://localhost:11434/v1` / `qwen2.5-coder:7b` | 仅本地开关开启后生效的本地模型配置 |
 | `CONTEXTLENS_USE_LOCAL_AGENT` | `false` | 为 `true` 时优先选择本地 Agent Bridge；与本地 API 开关同时开启时 Agent 优先 |
 | `CONTEXTLENS_LOCAL_AGENT_PROVIDER` | `codex-agent` | `claude-agent`、`codex-agent`、`antigravity-agent` 或 `copilot-agent` |
@@ -144,6 +144,8 @@ npm run bridge  # 只有本地 Agent 模式需要
 网页内面板右上角的“日志”会显示最近 15 条脱敏运行日志；日志实际保存在扩展的 `chrome.storage.local`，以便浏览器扩展在无本机文件写入权限时仍能稳定记录。每条日志包含时间、展示面板、阶段、供应商、传输方式、HTTP 状态（如有）和错误摘要；不会保存 API Key、完整 URL、选区、提示词、请求头或模型回答。日志页的“导出”会调用浏览器下载对话框，导出全部保留的时间线与诊断记录为 `.txt`；不得把学习记忆、回答历史或模型配置混入导出内容。静态排查记录放在 `diagnostics/`。
 
 自动上下文会额外产生短的“充分性评估”请求。Jev 启用时先返回带置信度的结构化 Choice；低置信度会扩展上下文并再次交给 Jev，只有 Jev 不可用时才调用既有 LLM JSON 评估。最终回答才使用流式请求。扩展至上下各 20 行这个上限后，跳过额外判断并直接生成回答，不再自动扩大到全文。
+
+用户可直接在网页内面板或原生侧栏的“设置”中开关“自动上下文评估”“Jev 判断”和“LLM 兜底判断”。设置保存在 `chrome.storage.local` 的面板偏好中，并立即影响后续请求；删除或重置该偏好后，才重新使用 `.env` 中的默认开关。关闭判断开关不会关闭最终学习回答请求。
 
 ### LLM 调用时间线
 

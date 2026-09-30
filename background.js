@@ -531,11 +531,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const requestId = String(message.requestId || "");
     const controller = new AbortController();
     const timeoutMs = Math.min(300000, Math.max(5000, Number(message.timeoutMs) || 15000));
+    const assessmentStartedMs = Date.now();
     if (requestId) nativeAssessmentRequests.set(requestId, controller);
-    const timer = setTimeout(() => controller.abort(new Error("上下文评估超时")), timeoutMs);
-    const assessmentConfig = ContextLensRuntimeConfig.getLearningDefaults().assessment || {};
-    ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-started", provider: model.provider, transport })
-      .then(() => ContextLensAssessmentRouter.assess({
+    const timer = setTimeout(() => {
+      void ContextLensRequestDiagnostics.record({
+        surface: "native-side-panel",
+        phase: "context-assessment-timeout",
+        provider: model.provider,
+        transport,
+        chainId: requestId,
+        stage: "native-assessment-timeout-triggered",
+        detail: "原生侧栏评估达到单次超时上限，正在中止请求",
+        elapsedMs: Date.now() - assessmentStartedMs,
+        timeoutMs
+      });
+      controller.abort(new Error("上下文评估超时"));
+    }, timeoutMs);
+    void ContextLensRequestDiagnostics.record({
+      surface: "native-side-panel",
+      phase: "context-assessment-received",
+      provider: model.provider,
+      transport,
+      chainId: requestId,
+      stage: "background-handler-entered",
+      detail: "后台已接收到上下文评估请求，诊断日志不会阻塞评估流程",
+      elapsedMs: Date.now() - assessmentStartedMs,
+      contextRadius: Number(message.radius) || 0,
+      timeoutMs
+    });
+    ContextAnswerPanelPreferences.getEffectiveAssessment()
+      .then((assessmentConfig) => ContextLensAssessmentRouter.assess({
         context: message.context || {},
         question: String(message.question || ""),
         languageHint: String(message.languageHint || "自动识别"),
@@ -545,7 +570,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         surface: "native-side-panel",
         chainId: requestId,
         chainLabel: "原生学习解释",
-        onStage: ({ text }) => chrome.runtime.sendMessage({ type: "CONTEXT_ASSESSMENT_STATUS", requestId, text }).catch(() => {}),
+        onStage: ({ text }) => chrome.runtime.sendMessage({ type: "CONTEXT_ASSESSMENT_STATUS", requestId, text })
+          .then(() => ({ ok: true }))
+          .catch((error) => ({ ok: false, error })),
         llmAssess: async () => {
           const text = await ContextLensFallbackChat.assess(model, String(message.prompt || ""), controller.signal, {
             surface: "native-side-panel", transport, chainId: requestId, chainLabel: "原生学习解释",
@@ -555,11 +582,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }))
       .then(async (decision) => {
-        await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-completed", provider: decision?.source === "jev" ? "typesafe" : model.provider, transport: decision?.source === "jev" ? "typesafe-systemone" : transport });
+        void ContextLensRequestDiagnostics.record({
+          surface: "native-side-panel",
+          phase: "context-assessment-response",
+          provider: decision?.source === "jev" ? "typesafe" : model.provider,
+          transport: decision?.source === "jev" ? "typesafe-systemone" : transport,
+          chainId: requestId,
+          stage: "background-response-send-start",
+          detail: `评估流程已返回 ${decision?.sufficient ? "sufficient" : "insufficient"}，准备回传侧栏`,
+          elapsedMs: Date.now() - assessmentStartedMs,
+          contextRadius: Number(message.radius) || 0
+        });
         sendResponse({ success: true, decision });
+        void ContextLensRequestDiagnostics.record({
+          surface: "native-side-panel",
+          phase: "context-assessment-response",
+          provider: decision?.source === "jev" ? "typesafe" : model.provider,
+          transport: decision?.source === "jev" ? "typesafe-systemone" : transport,
+          chainId: requestId,
+          stage: "background-response-send-finished",
+          detail: "评估结果已调用 sendResponse 回传侧栏",
+          elapsedMs: Date.now() - assessmentStartedMs,
+          contextRadius: Number(message.radius) || 0
+        });
       })
       .catch(async (error) => {
-        await ContextLensRequestDiagnostics.record({ surface: "native-side-panel", phase: "context-assessment-failed", provider: model.provider, transport, status: error.status || null, error: error.message });
+        await ContextLensRequestDiagnostics.record({
+          surface: "native-side-panel",
+          phase: "context-assessment-failed",
+          provider: model.provider,
+          transport,
+          chainId: requestId,
+          stage: controller.signal.aborted ? "background-assessment-aborted" : "background-assessment-failed",
+          detail: controller.signal.aborted ? "评估请求已被超时或取消信号中止" : "评估流程抛出异常",
+          elapsedMs: Date.now() - assessmentStartedMs,
+          contextRadius: Number(message.radius) || 0,
+          status: error.status || null,
+          error: error.message
+        });
         sendResponse({ success: false, error: error.message });
       }).finally(() => {
         clearTimeout(timer);

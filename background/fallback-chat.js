@@ -6,7 +6,7 @@
   const requests = new Map();
   const memoryCompactions = new Set();
 
-  function withAssessmentTimeout(operation, parentSignal, timeoutMs) {
+  function withAssessmentTimeout(operation, parentSignal, timeoutMs, onTimeout = () => {}) {
     const controller = new AbortController();
     let timedOut = false;
     if (parentSignal?.aborted) {
@@ -16,6 +16,7 @@
     parentSignal.addEventListener("abort", onParentAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
+      try { onTimeout(); } catch {}
       controller.abort(new Error("上下文评估超时"));
     }, timeoutMs);
     return operation(controller.signal).catch((error) => {
@@ -68,7 +69,9 @@
   }
 
   function event(tabId, requestId, payload) {
-    return chrome.tabs.sendMessage(tabId, { type: "FALLBACK_STREAM_EVENT", requestId, ...payload }).catch(() => {});
+    return chrome.tabs.sendMessage(tabId, { type: "FALLBACK_STREAM_EVENT", requestId, ...payload })
+      .then(() => ({ ok: true }))
+      .catch((error) => ({ ok: false, error }));
   }
 
   async function streamLines(response, onData, timeline) {
@@ -286,8 +289,20 @@
     };
     const controller = new AbortController();
     const requestState = { controller, cancelled: false, timedOut: false, timeoutId: null };
+    const requestStartedMs = Date.now();
     requestState.timeoutId = setTimeout(() => {
       requestState.timedOut = true;
+      void global.ContextLensRequestDiagnostics?.record?.({
+        surface: "in-page-panel",
+        phase: "learning-request-timeout",
+        provider: model.provider,
+        transport,
+        chainId: requestId,
+        stage: "workflow-timeout",
+        detail: "学习请求总超时，正在中止当前请求链",
+        elapsedMs: Date.now() - requestStartedMs,
+        timeoutMs: options.requestTimeoutMs
+      });
       controller.abort(new Error("学习请求总超时"));
     }, options.requestTimeoutMs);
     requests.set(requestId, requestState);
@@ -299,7 +314,9 @@
       return event(tabId, requestId, { event: "chunk", text });
     };
     const transport = model.provider?.endsWith("-agent") ? "local-agent-bridge" : (model.apiEndpoint ? "direct-endpoint" : "openai-compatible-base-url");
-    const assessmentConfig = global.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {};
+    const assessmentConfig = global.ContextAnswerPanelPreferences?.getEffectiveAssessment
+      ? await global.ContextAnswerPanelPreferences.getEffectiveAssessment()
+      : (global.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {});
     try {
       if (mode === "chat") {
         const prompt = global.ContextAnswerChatPrompt.build({ context, question: instruction, conversation });
@@ -322,8 +339,44 @@
           const judgingLabel = jevReady
             ? "正在由 Jev 判断选区是否足够回答…"
             : (assessmentConfig.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…");
-          await event(tabId, requestId, { event: "status", text: radius === 0 ? judgingLabel : `正在判断上下各 ${radius} 行上下文…` });
+          void global.ContextLensRequestDiagnostics?.record?.({
+            surface: "in-page-panel",
+            phase: "context-assessment-status",
+            provider: jevReady ? "typesafe" : model.provider,
+            transport: jevReady ? "typesafe-systemone" : transport,
+            chainId: requestId,
+            stage: "ui-status-send-start",
+            detail: `准备发送第 ${Number(radius) || 0} 行评估状态`,
+            elapsedMs: Date.now() - requestStartedMs,
+            contextRadius: radius
+          });
+          const statusDelivery = await event(tabId, requestId, { event: "status", text: radius === 0 ? judgingLabel : `正在判断上下各 ${radius} 行上下文…` });
+          void global.ContextLensRequestDiagnostics?.record?.({
+            surface: "in-page-panel",
+            phase: "context-assessment-status",
+            provider: jevReady ? "typesafe" : model.provider,
+            transport: jevReady ? "typesafe-systemone" : transport,
+            chainId: requestId,
+            stage: statusDelivery?.ok === false ? "ui-status-send-failed" : "ui-status-send-finished",
+            detail: statusDelivery?.ok === false ? `第 ${Number(radius) || 0} 行评估状态发送失败` : `第 ${Number(radius) || 0} 行评估状态发送调用已返回`,
+            error: statusDelivery?.error?.message,
+            elapsedMs: Date.now() - requestStartedMs,
+            contextRadius: radius
+          });
           const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint, radius });
+          const assessmentStartedMs = Date.now();
+          void global.ContextLensRequestDiagnostics?.record?.({
+            surface: "in-page-panel",
+            phase: "context-assessment-attempt",
+            provider: jevReady ? "typesafe" : model.provider,
+            transport: jevReady ? "typesafe-systemone" : transport,
+            chainId: requestId,
+            stage: "assessment-attempt-start",
+            detail: `开始第 ${Number(radius) || 0} 行上下文评估`,
+            elapsedMs: Date.now() - requestStartedMs,
+            contextRadius: radius,
+            timeoutMs: options.assessmentTimeoutMs
+          });
           return withAssessmentTimeout(
             (assessmentSignal) => global.ContextLensAssessmentRouter.assess({
               context: candidate,
@@ -345,14 +398,61 @@
               }
             }),
             controller.signal,
-            options.assessmentTimeoutMs
+            options.assessmentTimeoutMs,
+            () => {
+              void global.ContextLensRequestDiagnostics?.record?.({
+                surface: "in-page-panel",
+                phase: "context-assessment-timeout",
+                provider: jevReady ? "typesafe" : model.provider,
+                transport: jevReady ? "typesafe-systemone" : transport,
+                chainId: requestId,
+                stage: "assessment-timeout-triggered",
+                detail: `第 ${Number(radius) || 0} 行评估达到单次超时上限`,
+                elapsedMs: Date.now() - assessmentStartedMs,
+                contextRadius: radius,
+                timeoutMs: options.assessmentTimeoutMs
+              });
+            }
           );
         },
         expand: async (radius) => {
+          void global.ContextLensRequestDiagnostics?.record?.({
+            surface: "in-page-panel",
+            phase: "context-expansion",
+            provider: model.provider,
+            transport,
+            chainId: requestId,
+            stage: "context-window-read-start",
+            detail: `准备读取上下各 ${Number(radius) || 0} 行上下文`,
+            elapsedMs: Date.now() - requestStartedMs,
+            contextRadius: radius
+          });
           await event(tabId, requestId, { event: "status", text: `信息不足，正在读取上下各 ${radius} 行…` });
           const response = await chrome.tabs.sendMessage(tabId, { type: "GET_CONTEXT_WINDOW", radius }).catch(() => null);
+          void global.ContextLensRequestDiagnostics?.record?.({
+            surface: "in-page-panel",
+            phase: "context-expansion",
+            provider: model.provider,
+            transport,
+            chainId: requestId,
+            stage: response?.success ? "context-window-read-finished" : "context-window-read-failed",
+            detail: response?.success ? `上下各 ${Number(radius) || 0} 行上下文读取完成` : "内容脚本没有返回可用的上下文窗口",
+            elapsedMs: Date.now() - requestStartedMs,
+            contextRadius: radius
+          });
           return response?.success ? response.contextData : null;
         }
+      });
+      void global.ContextLensRequestDiagnostics?.record?.({
+        surface: "in-page-panel",
+        phase: "context-preparation-completed",
+        provider: model.provider,
+        transport,
+        chainId: requestId,
+        stage: "context-preparation-finished",
+        detail: "上下文评估与扩展流程已返回，准备生成最终学习提示词",
+        elapsedMs: Date.now() - requestStartedMs,
+        contextRadius: prepared.context?.contextWindow?.radius
       });
       if (prepared.status === "needs-user-context") {
         await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "needs-user-context", provider: model.provider, transport, error: prepared.message });
@@ -382,14 +482,14 @@
       });
       await streamAnswer(model, prompt, controller.signal, sendChunk, answerTimeline);
       void answerTimeline.finish("completed");
-      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport });
+      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: "completed", provider: model.provider, transport, chainId: requestId, stage: "learning-answer-completed", elapsedMs: Date.now() - requestStartedMs });
       await event(tabId, requestId, { event: "done", learningScopeKey: memoryState.key });
       void saveLearningMemory({ key: memoryState.key, question: instruction, answer: collectedAnswer, model, transport, chainId: requestId });
     } catch (error) {
       const message = requestState.timedOut
         ? `学习请求超过 ${Math.round(options.requestTimeoutMs / 1000)} 秒，请重试。`
         : (error.message || "请求失败。");
-      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: requestState.cancelled ? "cancelled" : "failed", provider: model.provider, transport, status: error.status || null, error: message });
+      await global.ContextLensRequestDiagnostics.record({ surface: "in-page-panel", phase: requestState.cancelled ? "cancelled" : "failed", provider: model.provider, transport, chainId: requestId, stage: requestState.cancelled ? "workflow-cancelled" : (requestState.timedOut ? "workflow-timeout-ended" : "workflow-failed"), elapsedMs: Date.now() - requestStartedMs, status: error.status || null, error: message });
       if (answerTimeline) void answerTimeline.finish(requestState.cancelled ? "cancelled" : (requestState.timedOut ? "timed-out" : "failed"), message);
       if (!requestState.cancelled) await event(tabId, requestId, { event: "error", error: message });
     } finally {

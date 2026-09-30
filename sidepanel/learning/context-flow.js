@@ -34,8 +34,28 @@
       },
       expand: async (radius) => {
         assertNotAborted(signal);
+        void global.ContextLensRequestDiagnostics?.record?.({
+          surface: "native-side-panel",
+          phase: "context-expansion",
+          provider: model.provider,
+          transport: "context-script",
+          chainId: workflowId,
+          stage: "context-window-read-start",
+          detail: `准备读取上下各 ${Number(radius) || 0} 行上下文`,
+          contextRadius: radius
+        });
         const response = await chrome.tabs.sendMessage(tabId, { type: "GET_CONTEXT_WINDOW", radius }).catch(() => null);
         assertNotAborted(signal);
+        void global.ContextLensRequestDiagnostics?.record?.({
+          surface: "native-side-panel",
+          phase: "context-expansion",
+          provider: model.provider,
+          transport: "context-script",
+          chainId: workflowId,
+          stage: response?.success ? "context-window-read-finished" : "context-window-read-failed",
+          detail: response?.success ? `上下各 ${Number(radius) || 0} 行上下文读取完成` : "内容脚本没有返回可用的上下文窗口",
+          contextRadius: radius
+        });
         return response?.success ? response.contextData : null;
       }
     });

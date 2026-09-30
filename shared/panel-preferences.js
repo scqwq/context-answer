@@ -5,9 +5,12 @@
 
   function defaults() {
     const config = global.ContextLensRuntimeConfig?.getDefaults?.() || {};
+    const assessment = config.learning?.assessment || {};
     return {
       panelMode: PANEL_MODES.has(config.panelMode) ? config.panelMode : "in-page",
-      contextAssessmentEnabled: config.learning?.assessmentEnabled !== false
+      contextAssessmentEnabled: config.learning?.assessmentEnabled !== false,
+      jevEnabled: assessment.jev?.enabled === true,
+      llmAssessmentEnabled: assessment.llmEnabled !== false
     };
   }
 
@@ -17,7 +20,25 @@
       panelMode: PANEL_MODES.has(raw.panelMode) ? raw.panelMode : fallback.panelMode,
       contextAssessmentEnabled: typeof raw.contextAssessmentEnabled === "boolean"
         ? raw.contextAssessmentEnabled
-        : fallback.contextAssessmentEnabled
+        : fallback.contextAssessmentEnabled,
+      jevEnabled: typeof raw.jevEnabled === "boolean" ? raw.jevEnabled : fallback.jevEnabled,
+      llmAssessmentEnabled: typeof raw.llmAssessmentEnabled === "boolean"
+        ? raw.llmAssessmentEnabled
+        : fallback.llmAssessmentEnabled
+    };
+  }
+
+  async function getEffectiveAssessment() {
+    const preferences = await get();
+    const defaultsConfig = global.ContextLensRuntimeConfig?.getLearningDefaults?.() || {};
+    const assessment = defaultsConfig.assessment || {};
+    return {
+      ...assessment,
+      jev: {
+        ...(assessment.jev || {}),
+        enabled: preferences.jevEnabled
+      },
+      llmEnabled: preferences.llmAssessmentEnabled
     };
   }
 
@@ -38,5 +59,5 @@
     return defaults();
   }
 
-  global.ContextAnswerPanelPreferences = { STORAGE_KEY, PANEL_MODES, defaults, normalize, get, set, reset };
+  global.ContextAnswerPanelPreferences = { STORAGE_KEY, PANEL_MODES, defaults, normalize, get, set, reset, getEffectiveAssessment };
 })(globalThis);

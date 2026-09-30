@@ -570,6 +570,13 @@ const I18N = {
     "settings.add_api_model": "添加 API 模型",
     "settings.detecting_agents": "正在探测本地 Agent...",
     "settings.temperature": "温度 / 创造力 (Temperature)",
+    "settings.context_assessment_title": "自动上下文判断",
+    "settings.context_assessment_tip": "这些开关只影响自动模式；最终回答仍会照常请求模型。",
+    "settings.context_assessment_enabled": "启用自动上下文评估",
+    "settings.jev_assessment_enabled": "启用 Jev 判断",
+    "settings.llm_assessment_enabled": "启用 LLM 兜底判断",
+    "settings.save_context_assessment": "保存上下文判断设置",
+    "settings.context_assessment_saved": "上下文判断设置已保存",
     "settings.save_active_model": "保存激活模型",
     "rules.title": "URL 自动切换规则",
     "rules.add_btn": "添加新规则",
@@ -775,6 +782,13 @@ const I18N = {
     "settings.add_api_model": "Add API Model",
     "settings.detecting_agents": "Detecting local agents...",
     "settings.temperature": "Temperature / Creativity",
+    "settings.context_assessment_title": "Automatic Context Assessment",
+    "settings.context_assessment_tip": "These switches affect Auto mode only; the final answer still uses the selected model.",
+    "settings.context_assessment_enabled": "Enable automatic context assessment",
+    "settings.jev_assessment_enabled": "Enable Jev assessment",
+    "settings.llm_assessment_enabled": "Enable LLM fallback assessment",
+    "settings.save_context_assessment": "Save context assessment settings",
+    "settings.context_assessment_saved": "Context assessment settings saved",
     "settings.save_active_model": "Save Active Model",
     "rules.title": "URL Auto-Switch Rules",
     "rules.add_btn": "Add Rule",
@@ -1003,6 +1017,10 @@ const settingsClose = document.getElementById("settings-close");
 const modelTemperature = document.getElementById("model-temperature");
 const tempVal = document.getElementById("temp-val");
 const settingsStatus = document.getElementById("settings-status");
+const contextAssessmentEnabled = document.getElementById("context-assessment-enabled");
+const jevAssessmentEnabled = document.getElementById("jev-assessment-enabled");
+const llmAssessmentEnabled = document.getElementById("llm-assessment-enabled");
+const assessmentSettingsSaveBtn = document.getElementById("assessment-settings-save-btn");
 const modelCardList = document.getElementById("model-card-list");
 const modelCardsStatus = document.getElementById("model-cards-status");
 
@@ -1316,6 +1334,31 @@ document.addEventListener("DOMContentLoaded", async () => {
     rebuildUIForActiveTab();
   }
 });
+
+async function loadAssessmentSettings() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null);
+  const preferences = response?.success ? response.preferences : null;
+  if (!preferences) return;
+  if (contextAssessmentEnabled) contextAssessmentEnabled.checked = preferences.contextAssessmentEnabled !== false;
+  if (jevAssessmentEnabled) jevAssessmentEnabled.checked = preferences.jevEnabled === true;
+  if (llmAssessmentEnabled) llmAssessmentEnabled.checked = preferences.llmAssessmentEnabled !== false;
+}
+
+async function saveAssessmentSettings() {
+  const response = await chrome.runtime.sendMessage({
+    type: "SET_PANEL_PREFERENCES",
+    preferences: {
+      contextAssessmentEnabled: contextAssessmentEnabled?.checked !== false,
+      jevEnabled: jevAssessmentEnabled?.checked === true,
+      llmAssessmentEnabled: llmAssessmentEnabled?.checked !== false
+    }
+  }).catch(() => null);
+  if (!response?.success) {
+    showSettingsStatus(response?.error || "上下文判断设置保存失败。", "error");
+    return;
+  }
+  showSettingsStatus(t("settings.context_assessment_saved"), "success");
+}
 
 // Load settings from chrome.storage.local
 async function loadSettings() {
@@ -2411,11 +2454,13 @@ function setupEventListeners() {
   // Drawer Toggle
   settingsToggle.addEventListener("click", async () => {
     await loadSettings(); // Reset to saved settings to discard unsaved edits
+    await loadAssessmentSettings();
     toggleDrawer(true);
   });
   settingsClose.addEventListener("click", () => toggleDrawer(false));
   configureNowBtn.addEventListener("click", async () => {
     await loadSettings(); // Reset to saved settings
+    await loadAssessmentSettings();
     toggleDrawer(true);
   });
   document.querySelector(".drawer-overlay").addEventListener("click", () => toggleDrawer(false));
@@ -2427,6 +2472,10 @@ function setupEventListeners() {
   modelTemperature.addEventListener("input", (e) => {
     tempVal.textContent = e.target.value;
   });
+
+  if (assessmentSettingsSaveBtn) {
+    assessmentSettingsSaveBtn.addEventListener("click", saveAssessmentSettings);
+  }
 
   // Save active model button
   const settingsSaveBtn = document.getElementById("settings-save-btn");
@@ -3979,6 +4028,12 @@ async function handleSendMessage() {
     && chatHistory.length === 0;
   if (canPlanLearningContext) {
     activeLearningOptions = await window.ContextLensLearningOptions.get();
+    const panelPreferencesResponse = await chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null);
+    const panelPreferences = panelPreferencesResponse?.success ? panelPreferencesResponse.preferences : null;
+    activeLearningOptions = {
+      ...activeLearningOptions,
+      contextAssessmentEnabled: panelPreferences?.contextAssessmentEnabled !== false
+    };
     const planningState = getTabRequestState(messageTabId);
     const planningController = new AbortController();
     const workflowId = `assessment-${messageTabId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3993,7 +4048,9 @@ async function handleSendMessage() {
     setRequestRunningState(true, messageTabId);
     if (learningNotice) {
       const assessmentSettings = window.ContextLensRuntimeConfig?.getLearningDefaults?.().assessment || {};
-      const jevReady = assessmentSettings.jev?.enabled && assessmentSettings.jev?.apiKey && assessmentSettings.jev?.apiUrl && assessmentSettings.jev?.model;
+      const jevReady = (panelPreferences?.jevEnabled ?? assessmentSettings.jev?.enabled)
+        && assessmentSettings.jev?.apiKey && assessmentSettings.jev?.apiUrl && assessmentSettings.jev?.model;
+      const llmAssessmentEnabled = panelPreferences?.llmAssessmentEnabled ?? assessmentSettings.llmEnabled;
       learningNotice.hidden = false;
       learningNotice.textContent = activeLearningOptions.contextAssessmentEnabled === false
         ? "自动上下文评估已关闭，正在仅使用当前选区…"
@@ -4001,7 +4058,7 @@ async function handleSendMessage() {
         ? (activeLearningOptions.manualLines === 0
           ? "手动模式：仅使用当前选区，不读取额外上下文。"
           : `正在读取上下各 ${activeLearningOptions.manualLines} 行上下文…`)
-        : (jevReady ? "正在由 Jev 判断选区是否足够回答…" : (assessmentSettings.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…"));
+        : (jevReady ? "正在由 Jev 判断选区是否足够回答…" : (llmAssessmentEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…"));
     }
     try {
       const runtimeDefaults = window.ContextLensRuntimeConfig?.getDefaults?.() || {};
