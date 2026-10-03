@@ -533,6 +533,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const timeoutMs = Math.min(300000, Math.max(5000, Number(message.timeoutMs) || 15000));
     const assessmentStartedMs = Date.now();
     if (requestId) nativeAssessmentRequests.set(requestId, controller);
+    let resolveAssessmentTimeout;
+    const assessmentTimeoutPromise = new Promise((resolve) => { resolveAssessmentTimeout = resolve; });
     const timer = setTimeout(() => {
       void ContextLensRequestDiagnostics.record({
         surface: "native-side-panel",
@@ -546,6 +548,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         timeoutMs
       });
       controller.abort(new Error("上下文评估超时"));
+      // 评估超时只放弃本次判断，侧栏应继续使用当前已读取的上下文窗口回答。
+      resolveAssessmentTimeout(null);
     }, timeoutMs);
     void ContextLensRequestDiagnostics.record({
       surface: "native-side-panel",
@@ -559,7 +563,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       contextRadius: Number(message.radius) || 0,
       timeoutMs
     });
-    ContextAnswerPanelPreferences.getEffectiveAssessment()
+    const assessmentPromise = ContextAnswerPanelPreferences.getEffectiveAssessment()
       .then((assessmentConfig) => ContextLensAssessmentRouter.assess({
         context: message.context || {},
         question: String(message.question || ""),
@@ -580,7 +584,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           return ContextLensContextAssessment.parse(text);
         }
-      }))
+      }));
+    Promise.race([assessmentPromise, assessmentTimeoutPromise])
       .then(async (decision) => {
         void ContextLensRequestDiagnostics.record({
           surface: "native-side-panel",
@@ -589,7 +594,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           transport: decision?.source === "jev" ? "typesafe-systemone" : transport,
           chainId: requestId,
           stage: "background-response-send-start",
-          detail: `评估流程已返回 ${decision?.sufficient ? "sufficient" : "insufficient"}，准备回传侧栏`,
+          detail: decision
+            ? `评估流程已返回 ${decision.sufficient ? "sufficient" : "insufficient"}，准备回传侧栏`
+            : "评估单次超时，准备使用当前上下文回传侧栏",
           elapsedMs: Date.now() - assessmentStartedMs,
           contextRadius: Number(message.radius) || 0
         });

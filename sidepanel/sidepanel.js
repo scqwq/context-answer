@@ -575,6 +575,7 @@ const I18N = {
     "settings.context_assessment_enabled": "启用自动上下文评估",
     "settings.jev_assessment_enabled": "启用 Jev 判断",
     "settings.llm_assessment_enabled": "启用 LLM 兜底判断",
+    "settings.assessment_timeout": "Jev / 上下文判断单次超时",
     "settings.save_context_assessment": "保存上下文判断设置",
     "settings.context_assessment_saved": "上下文判断设置已保存",
     "settings.save_active_model": "保存激活模型",
@@ -787,6 +788,7 @@ const I18N = {
     "settings.context_assessment_enabled": "Enable automatic context assessment",
     "settings.jev_assessment_enabled": "Enable Jev assessment",
     "settings.llm_assessment_enabled": "Enable LLM fallback assessment",
+    "settings.assessment_timeout": "Jev / context assessment timeout per attempt",
     "settings.save_context_assessment": "Save context assessment settings",
     "settings.context_assessment_saved": "Context assessment settings saved",
     "settings.save_active_model": "Save Active Model",
@@ -1007,6 +1009,11 @@ function applyI18nToStaticUI() {
     languageToggleBtn.classList.toggle("is-en", uiLanguage === "en");
   }
 
+  if (assessmentTimeoutSelect) {
+    const labels = uiLanguage === "en" ? ["5 s", "10 s", "15 s", "30 s", "60 s", "120 s"] : ["5 秒", "10 秒", "15 秒", "30 秒", "60 秒", "120 秒"];
+    Array.from(assessmentTimeoutSelect.options).forEach((option, index) => { option.textContent = labels[index] || option.textContent; });
+  }
+
   renderPendingClipboardAttachments();
 }
 
@@ -1020,6 +1027,7 @@ const settingsStatus = document.getElementById("settings-status");
 const contextAssessmentEnabled = document.getElementById("context-assessment-enabled");
 const jevAssessmentEnabled = document.getElementById("jev-assessment-enabled");
 const llmAssessmentEnabled = document.getElementById("llm-assessment-enabled");
+const assessmentTimeoutSelect = document.getElementById("assessment-timeout-select");
 const assessmentSettingsSaveBtn = document.getElementById("assessment-settings-save-btn");
 const modelCardList = document.getElementById("model-card-list");
 const modelCardsStatus = document.getElementById("model-cards-status");
@@ -1336,25 +1344,35 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 async function loadAssessmentSettings() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null);
+  const [response, optionsResponse] = await Promise.all([
+    chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null),
+    chrome.runtime.sendMessage({ type: "GET_LEARNING_OPTIONS" }).catch(() => null)
+  ]);
   const preferences = response?.success ? response.preferences : null;
-  if (!preferences) return;
-  if (contextAssessmentEnabled) contextAssessmentEnabled.checked = preferences.contextAssessmentEnabled !== false;
-  if (jevAssessmentEnabled) jevAssessmentEnabled.checked = preferences.jevEnabled === true;
-  if (llmAssessmentEnabled) llmAssessmentEnabled.checked = preferences.llmAssessmentEnabled !== false;
+  if (!preferences && !optionsResponse?.success) return;
+  if (contextAssessmentEnabled) contextAssessmentEnabled.checked = preferences?.contextAssessmentEnabled !== false;
+  if (jevAssessmentEnabled) jevAssessmentEnabled.checked = preferences?.jevEnabled === true;
+  if (llmAssessmentEnabled) llmAssessmentEnabled.checked = preferences?.llmAssessmentEnabled !== false;
+  if (assessmentTimeoutSelect) assessmentTimeoutSelect.value = String(optionsResponse?.options?.assessmentTimeoutMs || 15000);
 }
 
 async function saveAssessmentSettings() {
-  const response = await chrome.runtime.sendMessage({
-    type: "SET_PANEL_PREFERENCES",
-    preferences: {
-      contextAssessmentEnabled: contextAssessmentEnabled?.checked !== false,
-      jevEnabled: jevAssessmentEnabled?.checked === true,
-      llmAssessmentEnabled: llmAssessmentEnabled?.checked !== false
-    }
-  }).catch(() => null);
-  if (!response?.success) {
-    showSettingsStatus(response?.error || "上下文判断设置保存失败。", "error");
+  const [response, optionsResponse] = await Promise.all([
+    chrome.runtime.sendMessage({
+      type: "SET_PANEL_PREFERENCES",
+      preferences: {
+        contextAssessmentEnabled: contextAssessmentEnabled?.checked !== false,
+        jevEnabled: jevAssessmentEnabled?.checked === true,
+        llmAssessmentEnabled: llmAssessmentEnabled?.checked !== false
+      }
+    }).catch(() => null),
+    chrome.runtime.sendMessage({
+      type: "SET_LEARNING_OPTIONS",
+      options: { assessmentTimeoutMs: Number(assessmentTimeoutSelect?.value) || 15000 }
+    }).catch(() => null)
+  ]);
+  if (!response?.success || !optionsResponse?.success) {
+    showSettingsStatus(response?.error || optionsResponse?.error || "上下文判断设置保存失败。", "error");
     return;
   }
   showSettingsStatus(t("settings.context_assessment_saved"), "success");

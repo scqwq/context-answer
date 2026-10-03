@@ -24,8 +24,8 @@
   
   --shadow-neon: 0 8px 30px rgba(30, 155, 176, 0.06); /* 高级柔和亮色光影 */
   
-  --font-display: 'Outfit', 'Inter', -apple-system, sans-serif;
-  --font-sans: 'Inter', -apple-system, sans-serif;
+  --font-display: "MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", 'Outfit', 'Inter', -apple-system, sans-serif;
+  --font-sans: "MiSans", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", 'Inter', -apple-system, sans-serif;
 }
 
 /* Base Styles */
@@ -3004,6 +3004,26 @@ body.dark-theme .model-card-pin::after {
   margin: 8px 0;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.assessment-timeout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.assessment-timeout-row select {
+  min-width: 104px;
+  padding: 6px 8px;
+  color: var(--text-secondary);
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  font: inherit;
 }
 
 .assessment-settings .secondary-btn {

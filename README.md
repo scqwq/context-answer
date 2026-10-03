@@ -50,8 +50,8 @@ ContextLens 是一个 Chromium Manifest V3 扩展：在网页上划词或右键�
 
 - **学习模式**：选择语言和上下文策略后，点击“解释选区”或提问。
 - **普通聊天**：不需要选区，面板保留最近 20 轮会话。
-- **自动上下文**：最多扩展到上下各 20 行；到达该上限后直接生成回答，不再多发一次充分性判断请求。
-- **判断开关**：在网页内面板或原生侧边栏的“设置”中可直接开关自动上下文评估、Jev 判断和 LLM 兜底判断，不必修改 `.env`；设置会覆盖 `.env` 默认值，并立即作用于后续请求。
+- **自动上下文**：最多扩展到上下各 20 行；到达该上限后直接生成回答，不再多发一次充分性判断请求。若某一层 Jev/上下文判断超时，则保留当前已读取的 0、5、10 或 20 行上下文，直接交给最终回答模型。
+- **判断设置**：在网页内面板或原生侧边栏的“设置”中可直接开关自动上下文评估、Jev 判断和 LLM 兜底判断，并调整每次 Jev/上下文判断的超时时间，不必修改 `.env`；设置会覆盖 `.env` 默认值，并立即作用于后续请求。
 - **手动上下文**：可选上下各 `0 / 5 / 10 / 20` 行；`0` 只发送选区，不发起充分性判断。
 - **补充资料**：将远处定义、调用方或文档段落粘贴到补充框，只发送用户主动添加的内容。
 
@@ -103,7 +103,7 @@ CONTEXTLENS_LLM_ASSESSMENT_ENABLED=true
 
 Jev 低置信度会按信息不足扩展并重试，不会立即调用 LLM。`CONTEXTLENS_LLM_ASSESSMENT_ENABLED` 只控制 Jev 未配置或请求异常时的 LLM 兜底。两者均关闭时，自动模式直接用当前选区回答。
 
-也可以在 ContextAnswer 的“设置”中直接切换“自动上下文评估”“Jev 判断”和“LLM 兜底判断”。这些设置保存在浏览器本地并覆盖 `.env` 默认开关；Jev 的 API Key、URL 和 Model 仍需要先通过 `.env` 配置。关闭判断开关只会跳过充分性判断，不会关闭最终回答模型。
+也可以在 ContextAnswer 的“设置”中直接切换“自动上下文评估”“Jev 判断”和“LLM 兜底判断”，并设置每次判断的超时时间。这些设置保存在浏览器本地并覆盖 `.env` 默认值；Jev 的 API Key、URL 和 Model 仍需要先通过 `.env` 配置。关闭判断开关只会跳过充分性判断，不会关闭最终回答模型。网页内面板使用低对比度深色渐变背景，界面字体优先使用 MiSans / HarmonyOS Sans SC，未安装时回退到 Microsoft YaHei UI。
 
 ### 学习默认值
 
@@ -115,7 +115,7 @@ Jev 低置信度会按信息不足扩展并重试，不会立即调用 LLM。`CO
 | `CONTEXTLENS_LEARNING_MANUAL_LINES` | `0`、`5`、`10`、`20` |
 | `CONTEXTLENS_LEARNING_CONTEXT_ASSESSMENT_ENABLED` | `true` / `false` |
 | `CONTEXTLENS_LEARNING_REQUEST_TIMEOUT_MS` | 总工作流超时，默认 `90000` |
-| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | 单次判断超时，默认 `15000` |
+| `CONTEXTLENS_LEARNING_ASSESSMENT_TIMEOUT_MS` | 单次判断超时默认值，默认 `15000`；超时后使用当前上下文继续回答 |
 | `CONTEXTLENS_LEARNING_RESPONSE_DETAIL` | `compact` 或 `normal` |
 | `CONTEXTLENS_LEARNING_OUTPUT_STYLE` | `focus` 或 `standard` |
 | `CONTEXTLENS_LEARNING_CODE_EXAMPLES` | `never`、`on-demand`、`always` |

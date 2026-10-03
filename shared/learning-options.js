@@ -25,6 +25,8 @@
     const manualLines = [0, 5, 10, 20].includes(Number(raw.manualLines))
       ? Number(raw.manualLines)
       : ([0, 5, 10, 20].includes(Number(defaults.manualLines)) ? Number(defaults.manualLines) : 5);
+    const assessmentTimeoutMs = Math.min(300000, Math.max(5000,
+      Number(raw.assessmentTimeoutMs ?? defaults.assessmentTimeoutMs) || 15000));
     return {
       sourceLanguage,
       contextMode,
@@ -38,7 +40,7 @@
       maxKeyPoints: Math.min(5, Math.max(2, Number(raw.maxKeyPoints || defaults.maxKeyPoints) || 3)),
       codeExamples: ["never", "on-demand", "always"].includes(raw.codeExamples) ? raw.codeExamples : (["never", "on-demand", "always"].includes(defaults.codeExamples) ? defaults.codeExamples : "on-demand"),
       requestTimeoutMs: Math.min(300000, Math.max(5000, Number(defaults.requestTimeoutMs) || 90000)),
-      assessmentTimeoutMs: Math.min(300000, Math.max(5000, Number(defaults.assessmentTimeoutMs) || 15000))
+      assessmentTimeoutMs
     };
   }
 
@@ -48,12 +50,14 @@
   }
 
   async function set(next) {
-    const options = normalize(next);
-    // 仅保存用户可在面板改动的字段；翻译与回答风格继续由 .env 作为默认策略控制。
+    const saved = await chrome.storage.local.get(STORAGE_KEY);
+    const options = normalize({ ...(saved[STORAGE_KEY] || {}), ...(next || {}) });
+    // 保存面板可修改的字段；翻译与回答风格继续由 .env 作为默认策略控制。
     await chrome.storage.local.set({ [STORAGE_KEY]: {
       sourceLanguage: options.sourceLanguage,
       contextMode: options.contextMode,
-      manualLines: options.manualLines
+      manualLines: options.manualLines,
+      assessmentTimeoutMs: options.assessmentTimeoutMs
     } });
     return options;
   }

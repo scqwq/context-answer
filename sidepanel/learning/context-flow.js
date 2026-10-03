@@ -20,7 +20,7 @@
         const response = await chrome.runtime.sendMessage({
           type: "ASSESS_LEARNING_CONTEXT",
           requestId: workflowId,
-          timeoutMs: options.assessmentTimeoutMs,
+          timeoutMs: Math.min(options.assessmentTimeoutMs, Math.max(5000, options.requestTimeoutMs)),
           model,
           prompt,
           context: candidate,

@@ -81,6 +81,9 @@
     setTrailingText(settingField("setting-assessment").parentElement, ` ${t("assessment")}`);
     setTrailingText(settingField("setting-jev").parentElement, ` ${t("jevAssessment")}`);
     setTrailingText(settingField("setting-llm").parentElement, ` ${t("llmAssessment")}`);
+    setLeadingText(settingField("setting-assessment-timeout").closest("label"), t("assessmentTimeout"));
+    const timeoutLabels = uiLanguage === "en" ? ["5 s", "10 s", "15 s", "30 s", "60 s", "120 s"] : ["5 秒", "10 秒", "15 秒", "30 秒", "60 秒", "120 秒"];
+    Array.from(settingField("setting-assessment-timeout").options).forEach((option, index) => { option.textContent = timeoutLabels[index] || option.textContent; });
     elements.settingsPreferences.textContent = t("savePanel");
     panelRoot.querySelector(".model-form-heading h3").textContent = t("modelEditTitle");
     elements.modelNew.textContent = t("newModel");
@@ -150,11 +153,12 @@
     elements.settingsView.querySelectorAll(".agent-setting").forEach((item) => { item.hidden = !isAgent; });
   }
 
-  function populateSettings(model = null, preferences = null) {
+  function populateSettings(model = null, preferences = null, learningOptions = null) {
     settingField("setting-panel-mode").value = preferences?.panelMode || "in-page";
     settingField("setting-assessment").checked = preferences?.contextAssessmentEnabled !== false;
     settingField("setting-jev").checked = preferences?.jevEnabled === true;
     settingField("setting-llm").checked = preferences?.llmAssessmentEnabled !== false;
+    settingField("setting-assessment-timeout").value = String(learningOptions?.assessmentTimeoutMs || requestOptions?.assessmentTimeoutMs || 15000);
     populateModelForm(model);
   }
 
@@ -270,12 +274,13 @@
     elements.workspace.hidden = true;
     elements.settingsView.hidden = false;
     elements.exportLogs.hidden = true;
-    const [preferencesResponse, modelsResponse] = await Promise.all([
+    const [preferencesResponse, modelsResponse, learningOptionsResponse] = await Promise.all([
       chrome.runtime.sendMessage({ type: "GET_PANEL_PREFERENCES" }).catch(() => null),
-      chrome.runtime.sendMessage({ type: "GET_CONTEXT_ANSWER_MODELS" }).catch(() => null)
+      chrome.runtime.sendMessage({ type: "GET_CONTEXT_ANSWER_MODELS" }).catch(() => null),
+      chrome.runtime.sendMessage({ type: "GET_LEARNING_OPTIONS" }).catch(() => null)
     ]);
     if (viewMode !== "settings") return;
-    populateSettings(null, preferencesResponse?.preferences);
+    populateSettings(null, preferencesResponse?.preferences, learningOptionsResponse?.options);
     renderModelList(modelsResponse?.success ? modelsResponse.models : []);
     setVisibleStatus("设置页：保存后将立即应用到后续请求。");
   }
@@ -317,9 +322,19 @@
       jevEnabled: settingField("setting-jev").checked,
       llmAssessmentEnabled: settingField("setting-llm").checked
     };
-    const response = await chrome.runtime.sendMessage({ type: "SET_PANEL_PREFERENCES", preferences }).catch(() => null);
-    if (!response?.success) setVisibleStatus(response?.error || "设置保存失败。", "status error");
-    else setVisibleStatus("面板、Jev 与 LLM 判断设置已保存。");
+    const [response, optionsResponse] = await Promise.all([
+      chrome.runtime.sendMessage({ type: "SET_PANEL_PREFERENCES", preferences }).catch(() => null),
+      chrome.runtime.sendMessage({
+        type: "SET_LEARNING_OPTIONS",
+        options: { ...(requestOptions || {}), assessmentTimeoutMs: Number(settingField("setting-assessment-timeout").value) }
+      }).catch(() => null)
+    ]);
+    if (!response?.success || !optionsResponse?.success) {
+      setVisibleStatus(response?.error || optionsResponse?.error || "设置保存失败。", "status error");
+      return;
+    }
+    renderOptions({ ...(requestOptions || {}), ...(optionsResponse.options || {}) });
+    setVisibleStatus("面板、Jev、LLM 判断和超时设置已保存。");
   }
 
   async function useEnvironmentModel() {
@@ -343,15 +358,15 @@
     shadow.appendChild(stylesheet);
     const panel = document.createElement("section");
     panel.className = "panel";
-    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="export-logs header-utility" title="导出日志" hidden>导出</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="language-toggle header-utility" title="Switch to English">中文 / EN</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="primary">一键学习解释</button><button class="secondary">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><label class="setting-check"><input class="setting-jev" type="checkbox"> 启用 Jev 选区判断</label><label class="setting-check"><input class="setting-llm" type="checkbox"> 启用 LLM 兜底判断</label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
+    panel.innerHTML = `<header class="header drag-handle"><span class="title">ContextAnswer</span><span class="header-actions"><button class="home header-utility" title="返回当前会话">主页</button><button class="history header-utility" title="查看已完成的学习回答">历史</button><button class="diagnostics header-utility" title="查看 LLM 调用时间线与脱敏诊断">日志</button><button class="export-logs header-utility" title="导出日志" hidden>导出</button><button class="settings header-utility" title="打开设置" aria-label="打开设置">⚙</button><button class="language-toggle header-utility" title="Switch to English">中文 / EN</button><button class="close" title="关闭">×</button></span></header><main class="body"><section class="workspace"><div class="mode-row"><div class="mode-switch"><button class="mode-learning active" type="button">学习模式</button><button class="mode-chat" type="button">普通聊天</button></div><select class="model-select" title="切换当前模型"></select></div><pre class="context"></pre><div class="learning-controls"><div class="options"><label>语言<select class="source-language"></select></label><label>上下文<select class="context-mode"><option value="auto">自动选择</option><option value="manual">手动选择</option><option value="custom">自行添加</option></select></label><label class="manual-lines">上下各<select class="context-lines"><option value="0">0 行（仅选区）</option><option value="5">5 行</option><option value="10">10 行</option><option value="20">20 行</option></select></label></div><textarea class="supplemental-context" placeholder="粘贴远处的结构体、接口定义、调用方或文档段落…" hidden></textarea><p class="option-hint">自动模式会先由模型判断；自行添加仅使用选区和此处的补充资料。</p></div><textarea class="question-input" placeholder="例如：逐行解释这段代码"></textarea><div class="actions"><button class="secondary learning-action">一键学习解释</button><button class="primary question-action">发送问题</button><button class="stop" disabled>停止</button></div><div class="status">已准备就绪</div><article class="answer">请选择内容后开始学习。</article></section><section class="settings-view" hidden><div class="settings-heading"><h2>设置</h2><p>主页只用于选择当前模型；模型密钥和连接参数仅在此页显示。</p></div><label>面板展现<select class="setting-panel-mode"><option value="in-page">网页内面板（默认）</option><option value="auto">自动选择</option><option value="native">原生侧边栏优先</option></select></label><label class="setting-check"><input class="setting-assessment" type="checkbox"> 自动上下文评估（仅自动选择模式）</label><label class="setting-check"><input class="setting-jev" type="checkbox"> 启用 Jev 选区判断</label><label class="setting-check"><input class="setting-llm" type="checkbox"> 启用 LLM 兜底判断</label><label class="setting-timeout-label">Jev / 上下文判断单次超时<select class="setting-assessment-timeout"><option value="5000">5 秒</option><option value="10000">10 秒</option><option value="15000">15 秒</option><option value="30000">30 秒</option><option value="60000">60 秒</option><option value="120000">120 秒</option></select></label><div class="settings-actions"><button class="settings-preferences" type="button">保存面板设置</button></div><hr><div class="model-form-heading"><h3>添加 / 修改模型</h3><button class="model-new" type="button">新建</button></div><label>供应商<select class="setting-provider"><option value="custom">自定义兼容 API</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="claude-agent">Claude Code 本地 Agent</option><option value="codex-agent">Codex CLI 本地 Agent</option><option value="antigravity-agent">Antigravity 本地 Agent</option><option value="copilot-agent">Copilot CLI 本地 Agent</option></select></label><label>显示名称<input class="setting-label" placeholder="例如 DeepSeek Flash"></label><label>模型名<input class="setting-model" placeholder="例如 deepseek-flash"></label><label class="api-setting">API Key<input class="setting-key" type="password"></label><label class="api-setting">API URL / 基地址<input class="setting-url" placeholder="https://provider.example/v1"></label><label class="api-setting">完整 Endpoint（可选）<input class="setting-endpoint" placeholder="https://provider.example/api/chat"></label><label class="agent-setting" hidden>Bridge URL<input class="setting-bridge" placeholder="http://localhost:3100"></label><label class="agent-setting" hidden>命令路径（可选）<input class="setting-command" placeholder="codex / claude / agy"></label><div class="settings-actions"><button class="model-save" type="button">添加模型</button><button class="model-cancel" type="button" hidden>取消修改</button></div><h3>模型列表</h3><p class="model-list-note">.env 预置模型仅供选择；如需修改，请编辑 .env 后重新构建配置。</p><div class="model-list"></div><div class="settings-status status">设置就绪</div></section></main>`;
     panelRoot = panel;
     shadow.appendChild(panel);
     document.documentElement.appendChild(host);
     elements = {
       context: panel.querySelector(".context"),
       input: panel.querySelector(".question-input"),
-      learn: panel.querySelector(".primary"),
-      send: panel.querySelector(".secondary"),
+      learn: panel.querySelector(".learning-action"),
+      send: panel.querySelector(".question-action"),
       stop: panel.querySelector(".stop"),
       language: panel.querySelector(".source-language"),
       contextMode: panel.querySelector(".context-mode"),
@@ -572,7 +587,8 @@
         sourceLanguage: requestOptions.sourceLanguage,
         contextMode: requestOptions.contextMode,
         manualLines: requestOptions.manualLines,
-        supplementalContext: requestOptions.supplementalContext
+        supplementalContext: requestOptions.supplementalContext,
+        assessmentTimeoutMs: requestOptions.assessmentTimeoutMs
       } : null
     });
     if (!response?.success) {

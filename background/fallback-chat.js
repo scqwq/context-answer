@@ -14,17 +14,30 @@
     }
     const onParentAbort = () => controller.abort(parentSignal.reason);
     parentSignal.addEventListener("abort", onParentAbort, { once: true });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { onTimeout(); } catch {}
-      controller.abort(new Error("上下文评估超时"));
-    }, timeoutMs);
-    return operation(controller.signal).catch((error) => {
-      if (timedOut) throw new Error(`上下文评估超过 ${Math.round(timeoutMs / 1000)} 秒，请重试或改用手动上下文。`);
-      throw error;
-    }).finally(() => {
+    let timer;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       parentSignal.removeEventListener("abort", onParentAbort);
+      callback(value);
+    };
+    return new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try { onTimeout(); } catch {}
+        controller.abort(new Error("上下文评估超时"));
+        // 超时不终止整个学习请求：编排器收到 null 后会保留当前窗口，直接进入最终回答。
+        finish(resolve, null);
+      }, timeoutMs);
+      Promise.resolve()
+        .then(() => operation(controller.signal))
+        .then((value) => finish(resolve, value))
+        .catch((error) => {
+          if (timedOut) return;
+          finish(reject, error);
+        });
     });
   }
 
@@ -282,8 +295,9 @@
     const model = await resolveModel();
     if (!model.provider) throw new Error("请在设置或 .env 中配置模型。");
     const preferences = await global.ContextAnswerPanelPreferences?.get?.().catch(() => null);
+    const storedOptions = await global.ContextLensLearningOptions.get();
     const options = {
-      ...global.ContextLensLearningOptions.normalize(requestOptions || await global.ContextLensLearningOptions.get()),
+      ...global.ContextLensLearningOptions.normalize({ ...storedOptions, ...(requestOptions || {}) }),
       // 本地 CLI Agent 没有稳定的短 JSON 评估协议，直接使用当前选区回答。
       contextAssessmentEnabled: !String(model.provider || "").endsWith("-agent") && preferences?.contextAssessmentEnabled !== false
     };
@@ -339,66 +353,74 @@
           const judgingLabel = jevReady
             ? "正在由 Jev 判断选区是否足够回答…"
             : (assessmentConfig.llmEnabled === false ? "自动上下文判断已关闭，正在仅使用当前选区…" : "正在由 LLM 判断选区是否足够回答…");
-          void global.ContextLensRequestDiagnostics?.record?.({
-            surface: "in-page-panel",
-            phase: "context-assessment-status",
-            provider: jevReady ? "typesafe" : model.provider,
-            transport: jevReady ? "typesafe-systemone" : transport,
-            chainId: requestId,
-            stage: "ui-status-send-start",
-            detail: `准备发送第 ${Number(radius) || 0} 行评估状态`,
-            elapsedMs: Date.now() - requestStartedMs,
-            contextRadius: radius
-          });
-          const statusDelivery = await event(tabId, requestId, { event: "status", text: radius === 0 ? judgingLabel : `正在判断上下各 ${radius} 行上下文…` });
-          void global.ContextLensRequestDiagnostics?.record?.({
-            surface: "in-page-panel",
-            phase: "context-assessment-status",
-            provider: jevReady ? "typesafe" : model.provider,
-            transport: jevReady ? "typesafe-systemone" : transport,
-            chainId: requestId,
-            stage: statusDelivery?.ok === false ? "ui-status-send-failed" : "ui-status-send-finished",
-            detail: statusDelivery?.ok === false ? `第 ${Number(radius) || 0} 行评估状态发送失败` : `第 ${Number(radius) || 0} 行评估状态发送调用已返回`,
-            error: statusDelivery?.error?.message,
-            elapsedMs: Date.now() - requestStartedMs,
-            contextRadius: radius
-          });
-          const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint, radius });
           const assessmentStartedMs = Date.now();
-          void global.ContextLensRequestDiagnostics?.record?.({
-            surface: "in-page-panel",
-            phase: "context-assessment-attempt",
-            provider: jevReady ? "typesafe" : model.provider,
-            transport: jevReady ? "typesafe-systemone" : transport,
-            chainId: requestId,
-            stage: "assessment-attempt-start",
-            detail: `开始第 ${Number(radius) || 0} 行上下文评估`,
-            elapsedMs: Date.now() - requestStartedMs,
-            contextRadius: radius,
-            timeoutMs: options.assessmentTimeoutMs
-          });
-          return withAssessmentTimeout(
-            (assessmentSignal) => global.ContextLensAssessmentRouter.assess({
-              context: candidate,
-              question: instruction,
-              languageHint,
-              radius,
-              assessmentConfig,
-              signal: assessmentSignal,
-              surface: "in-page-panel",
-              chainId: requestId,
-              chainLabel: "网页内学习解释",
-              onStage: ({ text }) => event(tabId, requestId, { event: "status", text }),
-              llmAssess: async () => {
-                const text = await assess(model, assessmentPrompt, assessmentSignal, {
-                  surface: "in-page-panel", transport, chainId: requestId, chainLabel: "网页内学习解释",
-                  contextWindow: candidate.contextWindow
-                });
-                return global.ContextLensContextAssessment.parse(text);
-              }
-            }),
-            controller.signal,
+          // 单次超时必须覆盖状态消息、提示词编译和实际 Jev 请求，不能只包住 fetch。
+          const assessmentTimeoutMs = Math.min(
             options.assessmentTimeoutMs,
+            Math.max(5000, options.requestTimeoutMs)
+          );
+          return withAssessmentTimeout(
+            async (assessmentSignal) => {
+              void global.ContextLensRequestDiagnostics?.record?.({
+                surface: "in-page-panel",
+                phase: "context-assessment-status",
+                provider: jevReady ? "typesafe" : model.provider,
+                transport: jevReady ? "typesafe-systemone" : transport,
+                chainId: requestId,
+                stage: "ui-status-send-start",
+                detail: `准备发送第 ${Number(radius) || 0} 行评估状态`,
+                elapsedMs: Date.now() - requestStartedMs,
+                contextRadius: radius,
+                timeoutMs: assessmentTimeoutMs
+              });
+              const statusDelivery = await event(tabId, requestId, { event: "status", text: radius === 0 ? judgingLabel : `正在判断上下各 ${radius} 行上下文…` });
+              void global.ContextLensRequestDiagnostics?.record?.({
+                surface: "in-page-panel",
+                phase: "context-assessment-status",
+                provider: jevReady ? "typesafe" : model.provider,
+                transport: jevReady ? "typesafe-systemone" : transport,
+                chainId: requestId,
+                stage: statusDelivery?.ok === false ? "ui-status-send-failed" : "ui-status-send-finished",
+                detail: statusDelivery?.ok === false ? `第 ${Number(radius) || 0} 行评估状态发送失败` : `第 ${Number(radius) || 0} 行评估状态发送调用已返回`,
+                error: statusDelivery?.error?.message,
+                elapsedMs: Date.now() - requestStartedMs,
+                contextRadius: radius
+              });
+              const assessmentPrompt = global.ContextLensContextAssessment.buildPrompt({ context: candidate, question: instruction, languageHint, radius });
+              void global.ContextLensRequestDiagnostics?.record?.({
+                surface: "in-page-panel",
+                phase: "context-assessment-attempt",
+                provider: jevReady ? "typesafe" : model.provider,
+                transport: jevReady ? "typesafe-systemone" : transport,
+                chainId: requestId,
+                stage: "assessment-attempt-start",
+                detail: `开始第 ${Number(radius) || 0} 行上下文评估`,
+                elapsedMs: Date.now() - requestStartedMs,
+                contextRadius: radius,
+                timeoutMs: assessmentTimeoutMs
+              });
+              return global.ContextLensAssessmentRouter.assess({
+                context: candidate,
+                question: instruction,
+                languageHint,
+                radius,
+                assessmentConfig,
+                signal: assessmentSignal,
+                surface: "in-page-panel",
+                chainId: requestId,
+                chainLabel: "网页内学习解释",
+                onStage: ({ text }) => event(tabId, requestId, { event: "status", text }),
+                llmAssess: async () => {
+                  const text = await assess(model, assessmentPrompt, assessmentSignal, {
+                    surface: "in-page-panel", transport, chainId: requestId, chainLabel: "网页内学习解释",
+                    contextWindow: candidate.contextWindow
+                  });
+                  return global.ContextLensContextAssessment.parse(text);
+                }
+              });
+            },
+            controller.signal,
+            assessmentTimeoutMs,
             () => {
               void global.ContextLensRequestDiagnostics?.record?.({
                 surface: "in-page-panel",
@@ -410,7 +432,7 @@
                 detail: `第 ${Number(radius) || 0} 行评估达到单次超时上限`,
                 elapsedMs: Date.now() - assessmentStartedMs,
                 contextRadius: radius,
-                timeoutMs: options.assessmentTimeoutMs
+                timeoutMs: assessmentTimeoutMs
               });
             }
           );
